@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const BACKEND_API_URL = (
-  process.env.BACKEND_API_URL ?? "http://localhost:8000"
+  process.env.BACKEND_API_URL ?? "https://api.gidophotography.com"
 ).replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
@@ -39,10 +39,7 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: `${BACKEND_API_URL}/api/:path*`,
       },
-      {
-        source: "/uploads/:path*",
-        destination: `${BACKEND_API_URL}/uploads/:path*`,
-      },
+      // `/uploads/*` is proxied by `app/uploads/[...path]/route.ts` (prefers filesystem over this rewrite).
     ];
   },
 };

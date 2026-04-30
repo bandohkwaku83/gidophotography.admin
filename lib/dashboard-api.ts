@@ -83,7 +83,7 @@ export function activityItemToLabel(a: DashboardActivityItem): string {
 
 /**
  * GET /api/dashboard — aggregated stats, recent galleries, activity.
- * Requires `NEXT_PUBLIC_API_URL` and a stored Bearer token.
+ * Requires a stored Bearer token. Uses same-origin `/api/dashboard` (Next rewrite → backend).
  */
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const token = getAuthToken();

@@ -11,10 +11,9 @@ function backendBase(): string {
 }
 
 /**
- * Server-side proxy for public client gallery APIs.
- * Browser requests stay same-origin (`/api/share/...`); this handler forwards to
- * the real API. Relying only on `next.config` rewrites for client `fetch` is unreliable
- * in some Next.js / Turbopack setups.
+ * Same-origin proxy for `/uploads/*` static files. Keeps `<img src>` on the app origin
+ * and forwards to BACKEND_API_URL (more reliable than relying only on next.config rewrites
+ * for binary responses in some dev setups).
  */
 async function forward(
   request: NextRequest,
@@ -22,30 +21,18 @@ async function forward(
   method: string,
 ): Promise<NextResponse> {
   if (segments.length === 0) {
-    return NextResponse.json({ message: "Missing share path." }, { status: 404 });
+    return NextResponse.json({ message: "Missing uploads path." }, { status: 404 });
   }
 
   const joined = segments.map((s) => encodeURIComponent(s)).join("/");
-  const target = `${backendBase()}/api/share/${joined}${request.nextUrl.search}`;
-
-  const init: RequestInit = {
-    method,
-    cache: "no-store",
-  };
-
-  if (method !== "GET" && method !== "HEAD") {
-    const body = await request.arrayBuffer();
-    if (body.byteLength) init.body = body;
-    const ct = request.headers.get("content-type");
-    init.headers = ct ? { "content-type": ct } : undefined;
-  }
+  const target = `${backendBase()}/uploads/${joined}${request.nextUrl.search}`;
 
   let res: Response;
   try {
-    res = await fetch(target, init);
+    res = await fetch(target, { method, cache: "no-store" });
   } catch {
     return NextResponse.json(
-      { message: "Could not reach the gallery service. Is the API running?" },
+      { message: "Could not reach the storage service. Is the API running?" },
       { status: 502 },
     );
   }
@@ -53,6 +40,8 @@ async function forward(
   const outHeaders = new Headers();
   const ct = res.headers.get("content-type");
   if (ct) outHeaders.set("content-type", ct);
+  const cc = res.headers.get("cache-control");
+  if (cc) outHeaders.set("cache-control", cc);
 
   const buf = await res.arrayBuffer();
   return new NextResponse(buf, {
@@ -69,18 +58,10 @@ export async function GET(
   return forward(request, path ?? [], "GET");
 }
 
-export async function POST(
+export async function HEAD(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
 ) {
   const { path } = await context.params;
-  return forward(request, path ?? [], "POST");
-}
-
-export async function DELETE(
-  request: NextRequest,
-  context: { params: Promise<{ path: string[] }> },
-) {
-  const { path } = await context.params;
-  return forward(request, path ?? [], "DELETE");
+  return forward(request, path ?? [], "HEAD");
 }

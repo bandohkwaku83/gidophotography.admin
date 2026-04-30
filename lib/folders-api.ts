@@ -1,4 +1,4 @@
-import { apiUrl, API_BASE_URL } from "@/lib/api";
+import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 import { clearAuth, getAuthToken } from "@/lib/auth-demo";
 import type { ApiClient } from "@/lib/clients-api";
 import type { DemoAsset, DemoFinalAsset, FolderStatus } from "@/lib/demo-data";
@@ -783,18 +783,19 @@ export function folderSelectionLocked(folder: ApiFolder): boolean {
 /** Resolve a coverImage value (could be absolute URL or a relative path). */
 export function resolveCoverUrl(coverImage?: string | null): string | null {
   if (!coverImage) return null;
-  if (/^https?:\/\//i.test(coverImage)) return coverImage;
-  if (coverImage.startsWith("/")) {
-    if (API_BASE_URL) return `${API_BASE_URL}${coverImage}`;
-    return coverImage;
+  const normalized = sameOriginUploadsUrl(coverImage.trim());
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/")) {
+    if (API_BASE_URL) return `${API_BASE_URL}${normalized}`;
+    return normalized;
   }
-  if (API_BASE_URL) return `${API_BASE_URL}/${coverImage}`;
-  return `/${coverImage}`;
+  if (API_BASE_URL) return `${API_BASE_URL}/${normalized}`;
+  return `/${normalized}`;
 }
 
 /** Pick the best cover URL for an ApiFolder (prefers `coverImageUrl`). */
 export function getFolderCoverUrl(folder: ApiFolder): string | null {
-  if (folder.coverImageUrl) return folder.coverImageUrl;
+  if (folder.coverImageUrl) return resolveCoverUrl(folder.coverImageUrl);
   return resolveCoverUrl(folder.coverImage);
 }
 

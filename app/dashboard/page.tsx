@@ -14,7 +14,6 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
 import {
   activityItemToLabel,
   dashboardRecentGalleryToApiFolder,
@@ -119,7 +118,7 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const token = getAuthToken();
-      if (token && API_BASE_URL) {
+      if (token) {
         try {
           const d = await fetchDashboard();
           setStats(d.stats);

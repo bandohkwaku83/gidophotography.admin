@@ -1,4 +1,5 @@
-import { apiUrl, API_BASE_URL } from "@/lib/api";
+import { apiUrl } from "@/lib/api";
+import { resolveCoverUrl } from "@/lib/folders-api";
 import { clearAuth, getAuthToken } from "@/lib/auth-demo";
 
 /** Photographer settings from `GET`/`PUT /api/settings`. See `docs/backend-api-watermark-and-media.md`. */
@@ -96,16 +97,10 @@ function normalizeSettingsPayload(raw: unknown): ApiSettings {
 
 /** Best URL to show the default cover from settings (matches folder cover resolution). */
 export function getSettingsDefaultCoverUrl(settings: ApiSettings): string | null {
-  if (settings.defaultCoverImageUrl) return settings.defaultCoverImageUrl;
-  const path = settings.defaultCoverImage;
-  if (!path) return null;
-  if (/^https?:\/\//i.test(path)) return path;
-  if (path.startsWith("/")) {
-    if (API_BASE_URL) return `${API_BASE_URL}${path}`;
-    return path;
-  }
-  if (API_BASE_URL) return `${API_BASE_URL}/${path}`;
-  return `/${path}`;
+  return (
+    resolveCoverUrl(settings.defaultCoverImageUrl ?? null) ??
+    resolveCoverUrl(settings.defaultCoverImage ?? null)
+  );
 }
 
 export async function getSettings(): Promise<ApiSettings> {

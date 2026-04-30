@@ -1,1 +1,1 @@
-export const STUDIO_NAME = "Gido Studio";
+export const STUDIO_NAME = "Gidophotography";

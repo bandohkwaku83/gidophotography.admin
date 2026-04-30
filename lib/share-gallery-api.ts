@@ -1,4 +1,4 @@
-import { apiUrl, API_BASE_URL } from "@/lib/api";
+import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 
 export type ShareGalleryAsset = {
   id: string;
@@ -71,13 +71,14 @@ function bool(v: unknown, defaultVal = false): boolean {
 /** Resolve image URLs the same way as folder covers (relative → same-origin or API base). */
 export function resolvePublicGalleryImageUrl(url?: string | null): string {
   if (!url) return "";
-  if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("/")) {
-    if (API_BASE_URL) return `${API_BASE_URL}${url}`;
-    return url;
+  const normalized = sameOriginUploadsUrl(url.trim());
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/")) {
+    if (API_BASE_URL) return `${API_BASE_URL}${normalized}`;
+    return normalized;
   }
-  if (API_BASE_URL) return `${API_BASE_URL}/${url}`;
-  return `/${url}`;
+  if (API_BASE_URL) return `${API_BASE_URL}/${normalized}`;
+  return `/${normalized}`;
 }
 
 function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
