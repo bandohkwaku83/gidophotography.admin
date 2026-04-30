@@ -16,6 +16,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Gido Studio — proofing & delivery",
   description: "Photographer and client gallery experience (UI demo).",
+  icons: {
+    icon: [{ url: "/images/icon.png", type: "image/png" }],
+    apple: "/images/icon.png",
+  },
 };
 
 export default function RootLayout({
