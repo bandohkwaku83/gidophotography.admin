@@ -1,127 +1,193 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import type { DemoProject, FolderStatus } from "@/lib/demo-data";
-import { deleteFolder } from "@/lib/demo-data";
+import { Pencil, Share2, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  apiFolderStatusToUi,
+  getFolderClientName,
+  getFolderCoverUrl,
+  getFolderShareUrl,
+  type ApiFolder,
+} from "@/lib/folders-api";
 import { useToast } from "@/components/toast-provider";
+import { cn } from "@/lib/utils";
 
-function statusStyles(s: FolderStatus) {
-  switch (s) {
-    case "DRAFT":
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200";
-    case "SELECTION_PENDING":
-      return "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100";
-    case "COMPLETED":
-      return "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100";
-    default:
-      return "bg-zinc-100 text-zinc-700";
-  }
-}
+const FALLBACK_COVER = "https://picsum.photos/seed/gido-cover/1200/800";
 
-function statusLabel(s: FolderStatus) {
-  switch (s) {
-    case "DRAFT":
-      return "Draft";
-    case "SELECTION_PENDING":
-      return "Selection pending";
-    case "COMPLETED":
-      return "Completed";
-    default:
-      return s;
+function statusPill(folder: ApiFolder) {
+  const s = apiFolderStatusToUi(folder.status);
+  if (s === "COMPLETED") {
+    return (
+      <span className="rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
+        Done
+      </span>
+    );
   }
+  if (s === "SELECTION_PENDING") {
+    return (
+      <span className="rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm">
+        Selecting
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white ring-1 ring-white/25 backdrop-blur-sm">
+      Draft
+    </span>
+  );
 }
 
 export function FolderCard({
   folder,
   shareBaseUrl,
-  onDeleted,
+  clientNameById,
+  onEdit,
+  onDelete,
+  busy,
 }: {
-  folder: DemoProject;
+  folder: ApiFolder;
   shareBaseUrl: string;
-  onDeleted?: () => void;
+  clientNameById?: Map<string, string>;
+  onEdit?: (folder: ApiFolder) => void;
+  onDelete?: (folder: ApiFolder) => void | Promise<void>;
+  busy?: boolean;
 }) {
   const { showToast } = useToast();
-  const [open, setOpen] = useState(false);
-  const link = `${shareBaseUrl}/g/${folder.shareToken}`;
+  const [copied, setCopied] = useState(false);
+
+  const clientName = getFolderClientName(folder, clientNameById);
+  const cover = getFolderCoverUrl(folder) ?? FALLBACK_COVER;
+  const created = folder.createdAt
+    ? new Date(folder.createdAt).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "—";
+  const sharePath = getFolderShareUrl(folder);
+  const shareEnabled = folder.share?.enabled !== false && Boolean(sharePath);
+  const link =
+    sharePath && shareBaseUrl
+      ? `${shareBaseUrl.replace(/\/$/, "")}${sharePath}`
+      : `${shareBaseUrl}/g/${folder._id}`;
+
+  const eventTitle = folder.eventName?.trim() || clientName;
+  const subline = folder.eventName?.trim() ? clientName : folder.description || "—";
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1200);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      showToast("Could not copy link.", "error");
+    }
+  }
 
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-600">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-r from-indigo-500/10 via-sky-500/10 to-transparent" />
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="relative font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {folder.clientName}
-          </h3>
-          <p className="relative mt-1 text-xs text-zinc-500">
-            Created {new Date(folder.createdAt).toLocaleDateString()} · {folder.assets.length}{" "}
-            images
-          </p>
-        </div>
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${statusStyles(folder.status)}`}
-        >
-          {statusLabel(folder.status)}
-        </span>
-      </div>
-
-      <div className="relative mt-4 flex flex-1 flex-col gap-2">
+    <article
+      className={cn(
+        "group flex flex-col overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] ring-1 ring-zinc-900/[0.03] transition-shadow duration-200 hover:shadow-md hover:ring-zinc-900/[0.06] dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/[0.04]",
+        busy && "pointer-events-none opacity-60",
+      )}
+    >
+      <div className="relative">
         <Link
-          href={`/dashboard/folder/${folder.id}`}
-          className="inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-sky-500 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition hover:brightness-105"
+          href={`/dashboard/folder/${folder._id}`}
+          className="relative block aspect-[5/3] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/50"
         >
-          Open folder
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={cover}
+            alt=""
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+          />
         </Link>
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="w-full rounded-xl border border-zinc-200 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-          >
-            Actions
-          </button>
-          {open ? (
-            <>
-              <button
-                type="button"
-                className="fixed inset-0 z-10 cursor-default"
-                aria-label="Close menu"
-                onClick={() => setOpen(false)}
-              />
-              <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                <button
-                  type="button"
-                  className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                  onClick={async () => {
-                    setOpen(false);
-                    try {
-                      await navigator.clipboard.writeText(link);
-                      showToast("Gallery link copied.", "success");
-                    } catch {
-                      showToast(link, "info");
-                    }
-                  }}
-                >
-                  Copy link
-                </button>
-                <button
-                  type="button"
-                  className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                  onClick={() => {
-                    setOpen(false);
-                    if (!window.confirm(`Delete folder “${folder.clientName}”?`)) return;
-                    deleteFolder(folder.id);
-                    showToast("Folder removed.", "success");
-                    onDeleted?.();
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </>
+
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2">
+          <span className="pointer-events-auto">{statusPill(folder)}</span>
+        </div>
+
+        {copied ? (
+          <div className="absolute right-3 top-3 z-20 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-900 dark:text-emerald-300 dark:ring-zinc-700">
+            Copied
+          </div>
+        ) : null}
+
+        <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-end gap-1 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-2 pb-2.5 pt-10">
+          {shareEnabled ? (
+            <button
+              type="button"
+              className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/20 text-white shadow-sm backdrop-blur-sm transition hover:bg-white/35"
+              aria-label="Copy share link"
+              title="Copy share link"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void copyLink();
+              }}
+            >
+              <Share2 className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+
+          {onEdit ? (
+            <button
+              type="button"
+              className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/20 text-white shadow-sm backdrop-blur-sm transition hover:bg-white/35"
+              aria-label="Edit gallery"
+              title="Edit"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onEdit(folder);
+              }}
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+
+          {onDelete ? (
+            <button
+              type="button"
+              className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 text-red-200 shadow-sm backdrop-blur-sm transition hover:bg-red-500/90 hover:text-white"
+              aria-label="Delete gallery"
+              title="Delete"
+              disabled={busy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (busy) return;
+                if (!window.confirm(`Delete gallery "${eventTitle}"?`)) return;
+                void onDelete(folder);
+              }}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </button>
           ) : null}
         </div>
       </div>
-    </div>
+
+      <div className="flex flex-1 flex-col border-t border-zinc-100 p-4 dark:border-zinc-800/80">
+        <Link
+          href={`/dashboard/folder/${folder._id}`}
+          className="block min-w-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950"
+        >
+          <h2 className="truncate text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
+            {eventTitle}
+          </h2>
+          <p className="mt-1 truncate text-xs font-medium text-zinc-500 dark:text-zinc-400">{subline}</p>
+        </Link>
+        <p className="mt-3 text-[11px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
+          {created}
+        </p>
+      </div>
+    </article>
   );
 }
