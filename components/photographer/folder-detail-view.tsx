@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -43,6 +43,8 @@ import {
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
   patchFolderStatus,
+  deleteAllFolderFinalMedia,
+  deleteAllFolderRawMedia,
   deleteFolderFinalMedia,
   deleteFolderRawMedia,
   regenerateFolderShare,
@@ -143,6 +145,10 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [linkExpiry, setLinkExpiry] = useState("30d");
   /** `"raw:${id}"` | `"final:${id}"` while a delete request is in flight */
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [selectedRawIds, setSelectedRawIds] = useState<Set<string>>(() => new Set());
+  const [selectedFinalIds, setSelectedFinalIds] = useState<Set<string>>(() => new Set());
+  const rawSelectAllRef = useRef<HTMLInputElement>(null);
+  const finalSelectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
@@ -222,6 +228,61 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     const picked = selectionRows.filter((a) => a.selection === "SELECTED");
     return picked.length > 0 ? picked : selectionRows;
   }, [selectionRows]);
+
+  const rawIdsKey = useMemo(
+    () => rawAssets.map((a) => a.id).sort().join("\0"),
+    [rawAssets],
+  );
+  const finalIdsKey = useMemo(
+    () => finalAssets.map((f) => f.id).sort().join("\0"),
+    [finalAssets],
+  );
+
+  useEffect(() => {
+    setSelectedRawIds(new Set());
+    setSelectedFinalIds(new Set());
+  }, [folderId]);
+
+  useEffect(() => {
+    setSelectedRawIds((prev) => {
+      const valid = new Set(rawAssets.map((a) => a.id));
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+      }
+      if (next.size === prev.size && [...prev].every((id) => next.has(id))) return prev;
+      return next;
+    });
+  }, [rawIdsKey, rawAssets]);
+
+  useEffect(() => {
+    setSelectedFinalIds((prev) => {
+      const valid = new Set(finalAssets.map((f) => f.id));
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+      }
+      if (next.size === prev.size && [...prev].every((id) => next.has(id))) return prev;
+      return next;
+    });
+  }, [finalIdsKey, finalAssets]);
+
+  const rawAllSelected =
+    rawAssets.length > 0 && rawAssets.every((a) => selectedRawIds.has(a.id));
+  const rawSomeSelected = selectedRawIds.size > 0 && !rawAllSelected;
+  const finalAllSelected =
+    finalAssets.length > 0 && finalAssets.every((f) => selectedFinalIds.has(f.id));
+  const finalSomeSelected = selectedFinalIds.size > 0 && !finalAllSelected;
+
+  useEffect(() => {
+    const el = rawSelectAllRef.current;
+    if (el) el.indeterminate = rawSomeSelected;
+  }, [rawSomeSelected]);
+
+  useEffect(() => {
+    const el = finalSelectAllRef.current;
+    if (el) el.indeterminate = finalSomeSelected;
+  }, [finalSomeSelected]);
 
   async function onRawUpload(files: File[]) {
     if (!folder || busy || files.length === 0) return;
@@ -304,6 +365,36 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return busy || uploadProgress !== null || deletingKey !== null;
   }
 
+  function toggleRawSelected(mediaId: string) {
+    if (mediaDeleteBlocked()) return;
+    setSelectedRawIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(mediaId)) next.delete(mediaId);
+      else next.add(mediaId);
+      return next;
+    });
+  }
+
+  function toggleFinalSelected(mediaId: string) {
+    if (mediaDeleteBlocked()) return;
+    setSelectedFinalIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(mediaId)) next.delete(mediaId);
+      else next.add(mediaId);
+      return next;
+    });
+  }
+
+  function setRawSelectAll(select: boolean) {
+    if (mediaDeleteBlocked()) return;
+    setSelectedRawIds(select ? new Set(rawAssets.map((a) => a.id)) : new Set());
+  }
+
+  function setFinalSelectAll(select: boolean) {
+    if (mediaDeleteBlocked()) return;
+    setSelectedFinalIds(select ? new Set(finalAssets.map((f) => f.id)) : new Set());
+  }
+
   async function onDeleteRawAsset(mediaId: string) {
     if (!folder || mediaDeleteBlocked()) return;
     if (
@@ -317,6 +408,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     try {
       await deleteFolderRawMedia(folder._id, mediaId);
       await refreshFolder();
+      setSelectedRawIds((prev) => {
+        if (!prev.has(mediaId)) return prev;
+        const next = new Set(prev);
+        next.delete(mediaId);
+        return next;
+      });
       showToast("Image removed.", "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Could not delete image.", "error");
@@ -334,9 +431,123 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     try {
       await deleteFolderFinalMedia(folder._id, mediaId);
       await refreshFolder();
+      setSelectedFinalIds((prev) => {
+        if (!prev.has(mediaId)) return prev;
+        const next = new Set(prev);
+        next.delete(mediaId);
+        return next;
+      });
       showToast("Final removed.", "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Could not delete final.", "error");
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  async function onDeleteAllRaw() {
+    if (!folder || mediaDeleteBlocked() || rawAssets.length === 0) return;
+    if (
+      !confirm(
+        `Delete all ${rawAssets.length} raw upload(s)? This cannot be undone and removes them from the gallery.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingKey("raw:all");
+    try {
+      await deleteAllFolderRawMedia(folder._id);
+      await refreshFolder();
+      setSelectedRawIds(new Set());
+      showToast("All raw uploads removed.", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not delete raw uploads.", "error");
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  async function onDeleteAllFinals() {
+    if (!folder || mediaDeleteBlocked() || finalAssets.length === 0) return;
+    if (
+      !confirm(
+        `Delete all ${finalAssets.length} final(s)? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingKey("final:all");
+    try {
+      await deleteAllFolderFinalMedia(folder._id);
+      await refreshFolder();
+      setSelectedFinalIds(new Set());
+      showToast("All finals removed.", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not delete finals.", "error");
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  async function onDeleteSelectedRaw() {
+    if (!folder || mediaDeleteBlocked()) return;
+    const ids = rawAssets.map((a) => a.id).filter((id) => selectedRawIds.has(id));
+    if (ids.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${ids.length} selected image(s)? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingKey("raw:bulk");
+    try {
+      if (ids.length === rawAssets.length) {
+        await deleteAllFolderRawMedia(folder._id);
+      } else {
+        for (const id of ids) {
+          await deleteFolderRawMedia(folder._id, id);
+        }
+      }
+      await refreshFolder();
+      setSelectedRawIds(new Set());
+      showToast(
+        ids.length === 1 ? "Image removed." : `${ids.length} images removed.`,
+        "success",
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not delete selected images.", "error");
+      await refreshFolder().catch(() => {});
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  async function onDeleteSelectedFinals() {
+    if (!folder || mediaDeleteBlocked()) return;
+    const ids = finalAssets.map((f) => f.id).filter((id) => selectedFinalIds.has(id));
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected final(s)? This cannot be undone.`)) {
+      return;
+    }
+    setDeletingKey("final:bulk");
+    try {
+      if (ids.length === finalAssets.length) {
+        await deleteAllFolderFinalMedia(folder._id);
+      } else {
+        for (const id of ids) {
+          await deleteFolderFinalMedia(folder._id, id);
+        }
+      }
+      await refreshFolder();
+      setSelectedFinalIds(new Set());
+      showToast(
+        ids.length === 1 ? "Final removed." : `${ids.length} finals removed.`,
+        "success",
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not delete selected finals.", "error");
+      await refreshFolder().catch(() => {});
     } finally {
       setDeletingKey(null);
     }
@@ -677,13 +888,61 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         ) : null}
         {tab === "uploads" ? (
           <div className="space-y-6">
-            <div className="border-b border-zinc-100 pb-5 dark:border-zinc-800/80">
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                Raw uploads
-              </h3>
-              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                Upload raw files to this gallery. They are sent to the server immediately.
-              </p>
+            <div className="flex flex-col gap-3 border-b border-zinc-100 pb-5 dark:border-zinc-800/80 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                  Raw uploads
+                </h3>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                  Upload raw files to this gallery. They are sent to the server immediately.
+                </p>
+              </div>
+              {rawAssets.length > 0 ? (
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
+                  <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    <input
+                      ref={rawSelectAllRef}
+                      type="checkbox"
+                      checked={rawAllSelected}
+                      disabled={mediaDeleteBlocked()}
+                      onChange={(e) => setRawSelectAll(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-zinc-300 text-brand focus:ring-brand dark:border-zinc-600"
+                    />
+                    Select all
+                  </label>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {selectedRawIds.size > 0 ? (
+                      <span className="text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
+                        {selectedRawIds.size} selected
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteSelectedRaw()}
+                      disabled={mediaDeleteBlocked() || selectedRawIds.size === 0}
+                      className="inline-flex min-h-[2.25rem] min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    >
+                      {deletingKey === "raw:bulk" ? (
+                        <InlineActionSkeleton />
+                      ) : (
+                        "Delete selected"
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteAllRaw()}
+                      disabled={mediaDeleteBlocked()}
+                      className="inline-flex min-h-[2.25rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200/90 bg-white px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-red-900/60 dark:bg-zinc-950 dark:text-red-400 dark:hover:bg-red-950/40"
+                    >
+                      {deletingKey === "raw:all" ? (
+                        <InlineActionSkeleton />
+                      ) : (
+                        "Delete all"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <UploadDragger disabled={busy} onFiles={(files) => void onRawUpload(files)} />
             {rawAssets.length === 0 ? (
@@ -704,6 +963,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50/30 shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-900/40 dark:ring-white/[0.04] dark:hover:border-zinc-500"
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
+                      <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 rounded border-zinc-400 text-brand focus:ring-brand"
+                          checked={selectedRawIds.has(a.id)}
+                          onChange={() => toggleRawSelected(a.id)}
+                          disabled={mediaDeleteBlocked()}
+                          aria-label={`Select ${a.originalName}`}
+                        />
+                      </label>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={a.thumbUrl}
@@ -796,13 +1065,61 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
 
         {tab === "finals" ? (
           <div className="space-y-6">
-            <div className="border-b border-zinc-100 pb-5 dark:border-zinc-800/80">
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                Final delivery
-              </h3>
-              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                Upload finished edits for client delivery. Files are stored on the server.
-              </p>
+            <div className="flex flex-col gap-3 border-b border-zinc-100 pb-5 dark:border-zinc-800/80 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                  Final delivery
+                </h3>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                  Upload finished edits for client delivery. Files are stored on the server.
+                </p>
+              </div>
+              {finalAssets.length > 0 ? (
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
+                  <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    <input
+                      ref={finalSelectAllRef}
+                      type="checkbox"
+                      checked={finalAllSelected}
+                      disabled={mediaDeleteBlocked()}
+                      onChange={(e) => setFinalSelectAll(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-zinc-300 text-brand focus:ring-brand dark:border-zinc-600"
+                    />
+                    Select all
+                  </label>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {selectedFinalIds.size > 0 ? (
+                      <span className="text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
+                        {selectedFinalIds.size} selected
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteSelectedFinals()}
+                      disabled={mediaDeleteBlocked() || selectedFinalIds.size === 0}
+                      className="inline-flex min-h-[2.25rem] min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    >
+                      {deletingKey === "final:bulk" ? (
+                        <InlineActionSkeleton />
+                      ) : (
+                        "Delete selected"
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteAllFinals()}
+                      disabled={mediaDeleteBlocked()}
+                      className="inline-flex min-h-[2.25rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200/90 bg-white px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-red-900/60 dark:bg-zinc-950 dark:text-red-400 dark:hover:bg-red-950/40"
+                    >
+                      {deletingKey === "final:all" ? (
+                        <InlineActionSkeleton />
+                      ) : (
+                        "Delete all"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <UploadDragger
               label="Drop edited finals here"
@@ -822,6 +1139,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/[0.04] dark:hover:border-zinc-500"
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
+                      <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 rounded border-zinc-400 text-brand focus:ring-brand"
+                          checked={selectedFinalIds.has(f.id)}
+                          onChange={() => toggleFinalSelected(f.id)}
+                          disabled={mediaDeleteBlocked()}
+                          aria-label={`Select ${f.name}`}
+                        />
+                      </label>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={f.url}

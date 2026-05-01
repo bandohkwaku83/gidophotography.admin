@@ -599,6 +599,40 @@ export async function deleteFolderFinalMedia(folderId: string, mediaId: string):
   }
 }
 
+/** Deletes every raw upload in the folder (`DELETE …/media/raw`). */
+export async function deleteAllFolderRawMedia(folderId: string): Promise<void> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/media/raw`,
+    { method: "DELETE" },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:media:raw:deleteAll] response", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to delete all raw photos (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+}
+
+/** Deletes every final in the folder (`DELETE …/media/final`). */
+export async function deleteAllFolderFinalMedia(folderId: string): Promise<void> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/media/final`,
+    { method: "DELETE" },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:media:final:deleteAll] response", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to delete all finals (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+}
+
 export async function patchFolderStatus(folderId: string, status: string): Promise<ApiFolder> {
   const res = await authedFetch(`/api/folders/${encodeURIComponent(folderId)}/status`, {
     method: "PATCH",

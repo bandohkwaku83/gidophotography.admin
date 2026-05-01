@@ -13,7 +13,6 @@ import { GalleryCardSkeleton, ListRefreshSkeleton } from "@/components/ui/skelet
 export default function GalleriesPage() {
   const { query } = useFolderListSearch();
   const { showToast } = useToast();
-  const [origin, setOrigin] = useState("");
 
   const [folders, setFolders] = useState<ApiFolder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,10 +25,6 @@ export default function GalleriesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ApiFolder | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-
-  useEffect(() => {
-    queueMicrotask(() => setOrigin(window.location.origin));
-  }, []);
 
   const fetchFolders = useCallback(
     async (search: string, signal?: AbortSignal) => {
@@ -196,7 +191,6 @@ export default function GalleriesPage() {
             <FolderCard
               key={g._id}
               folder={g}
-              shareBaseUrl={origin}
               clientNameById={clientNameById}
               busy={pendingDeleteId === g._id}
               onEdit={(f) => {
