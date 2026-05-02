@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   activityItemToLabel,
+  DASHBOARD_HOME_LIST_LIMIT,
   dashboardRecentGalleryToApiFolder,
   DashboardApiError,
   fetchDashboard,
@@ -192,15 +193,14 @@ export default function DashboardPage() {
   }, [stats, clientCount, folders.length, pipeline]);
 
   const recentGalleries = useMemo(() => {
-    if (stats) return folders;
     return [...folders]
       .sort((a, b) => {
         const ta = a.updatedAt ?? a.createdAt ?? "";
         const tb = b.updatedAt ?? b.createdAt ?? "";
         return tb.localeCompare(ta);
       })
-      .slice(0, 3);
-  }, [stats, folders]);
+      .slice(0, DASHBOARD_HOME_LIST_LIMIT);
+  }, [folders]);
 
   const derivedActivity = useMemo(() => {
     return [...folders]
@@ -220,10 +220,13 @@ export default function DashboardPage() {
       })
       .filter((a) => a.when)
       .sort((a, b) => b.when.localeCompare(a.when))
-      .slice(0, 8);
+      .slice(0, DASHBOARD_HOME_LIST_LIMIT);
   }, [folders, clientNameById]);
 
-  const recentActivity = stats ? dashboardActivity : derivedActivity;
+  const recentActivity = useMemo(() => {
+    const rows = stats ? dashboardActivity : derivedActivity;
+    return rows.slice(0, DASHBOARD_HOME_LIST_LIMIT);
+  }, [stats, dashboardActivity, derivedActivity]);
 
   const compact = (n: number) => {
     if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
@@ -426,7 +429,7 @@ export default function DashboardPage() {
           </div>
           {loading && recentGalleries.length === 0 ? (
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, i) => (
+              {Array.from({ length: DASHBOARD_HOME_LIST_LIMIT }).map((_, i) => (
                 <GalleryCardSkeleton key={i} />
               ))}
             </div>
@@ -461,7 +464,7 @@ export default function DashboardPage() {
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Activity</h2>
           <p className="mt-0.5 text-xs text-zinc-500">Latest changes to your galleries</p>
           {loading && recentActivity.length === 0 ? (
-            <ActivityFeedSkeleton rows={5} />
+            <ActivityFeedSkeleton rows={DASHBOARD_HOME_LIST_LIMIT} />
           ) : recentActivity.length === 0 ? (
             <p className="mt-6 text-sm text-zinc-500">No activity yet.</p>
           ) : (

@@ -334,13 +334,27 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
 /**
  * Public (no auth) gallery payload for a share link token/slug/code.
  * Backend: `GET /api/share/:token`
+ *
+ * @param options.baseOrigin — When set (e.g. `https://example.com` from `headers()`), fetch uses
+ *   `${baseOrigin}/api/share/...` so server-side metadata / OG works. Otherwise uses {@link apiUrl}.
  */
 export async function getShareGallery(
   shareToken: string,
   signal?: AbortSignal,
+  options?: { baseOrigin?: string },
 ): Promise<NormalizedShareGallery> {
   const path = `/api/share/${encodeURIComponent(shareToken)}`;
-  const res = await fetch(apiUrl(path), { method: "GET", signal, cache: "no-store" });
+  const url =
+    options?.baseOrigin != null && options.baseOrigin.length > 0
+      ? `${options.baseOrigin.replace(/\/$/, "")}${path}`
+      : apiUrl(path);
+  const res = await fetch(url, {
+    method: "GET",
+    signal,
+    ...(options?.baseOrigin
+      ? { next: { revalidate: 120 } }
+      : { cache: "no-store" }),
+  });
   const body = await parseJson(res);
   console.log("[share:get]", { path, status: res.status, ok: res.ok, body });
   if (!res.ok) {

@@ -81,9 +81,13 @@ export function activityItemToLabel(a: DashboardActivityItem): string {
   return `${a.action} · ${target}`;
 }
 
+/** Dashboard home shows this many recent galleries and activity rows (newest first). */
+export const DASHBOARD_HOME_LIST_LIMIT = 6;
+
 /**
  * GET /api/dashboard — aggregated stats, recent galleries, activity.
  * Requires a stored Bearer token. Uses same-origin `/api/dashboard` (Next rewrite → backend).
+ * Prefer returning at least {@link DASHBOARD_HOME_LIST_LIMIT} items each for `recentGalleries` and `activity` so the home grid is filled.
  */
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const token = getAuthToken();
