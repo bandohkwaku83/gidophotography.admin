@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { shareCoverOpenGraphAbsoluteUrl } from "@/lib/api";
 import { getShareGallery, ShareGalleryError } from "@/lib/share-gallery-api";
 
 /** Link preview description for shared client galleries (WhatsApp, iMessage, etc.). */
@@ -27,16 +28,6 @@ async function requestSiteOrigin(): Promise<string> {
   return "http://localhost:3000";
 }
 
-/** Open Graph / crawlers need an absolute image URL. */
-function absoluteOgImageUrl(coverUrl: string | undefined, siteOrigin: string): string | undefined {
-  if (!coverUrl?.trim()) return undefined;
-  const c = coverUrl.trim();
-  if (/^https?:\/\//i.test(c)) return c;
-  const base = siteOrigin.replace(/\/$/, "");
-  if (c.startsWith("/")) return `${base}${c}`;
-  return `${base}/${c}`;
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -54,7 +45,7 @@ export async function generateMetadata({
       const gallery = await getShareGallery(token, undefined, { baseOrigin: siteOrigin });
       const name = gallery.eventName?.trim();
       if (name) title = name;
-      coverForOg = absoluteOgImageUrl(gallery.coverImageUrl, siteOrigin);
+      coverForOg = shareCoverOpenGraphAbsoluteUrl(gallery.coverImageUrl, siteOrigin);
     } catch (e) {
       if (!(e instanceof ShareGalleryError)) {
         console.warn("[g/metadata] share fetch failed", e);
@@ -64,15 +55,19 @@ export async function generateMetadata({
 
   const description = CLIENT_GALLERY_OG_DESCRIPTION;
   const images = coverForOg ? [{ url: coverForOg, alt: title }] : undefined;
+  const baseNoSlash = siteOrigin.replace(/\/$/, "");
+  const canonicalPath = rawToken ? `/g/${encodeURIComponent(rawToken)}` : "/g";
 
   return {
     metadataBase: new URL(siteOrigin),
     title,
     description,
+    alternates: { canonical: `${baseNoSlash}${canonicalPath}` },
     openGraph: {
       title,
       description,
       type: "website",
+      url: `${baseNoSlash}${canonicalPath}`,
       siteName: "Gidophotography",
       images,
     },

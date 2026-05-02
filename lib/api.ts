@@ -41,6 +41,26 @@ export function sameOriginUploadsUrl(url: string): string {
 }
 
 /**
+ * Absolute URL for `og:image` on this site. Link-preview crawlers (WhatsApp, etc.) should
+ * fetch the **app origin** (`/uploads/...` via Next proxy), not the API host, which often
+ * blocks or fails for external user-agents.
+ */
+export function shareCoverOpenGraphAbsoluteUrl(
+  coverUrl: string | undefined,
+  siteOrigin: string,
+): string | undefined {
+  if (!coverUrl?.trim()) return undefined;
+  const base = siteOrigin.replace(/\/$/, "");
+  let coerced = sameOriginUploadsUrl(coverUrl.trim());
+  if (/^https?:\/\//i.test(coerced)) {
+    coerced = sameOriginUploadsUrl(coerced);
+  }
+  if (coerced.startsWith("/")) return `${base}${coerced}`;
+  if (/^https?:\/\//i.test(coerced)) return coerced;
+  return `${base}/${coerced}`;
+}
+
+/**
  * Build API URLs for fetch(). Default empty base = same-origin `/api/...` so Next.js
  * rewrites proxy to BACKEND_API_URL (see next.config.ts) — avoids browser CORS when
  * developing on localhost. Set NEXT_PUBLIC_API_URL only if you intentionally call the
