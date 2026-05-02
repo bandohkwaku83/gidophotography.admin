@@ -7,8 +7,10 @@ import {
   Calendar,
   Check,
   ChevronRight,
+  ChevronUp,
   Copy,
   ExternalLink,
+  Focus,
   ImageIcon,
   Layers,
   Link2,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
+import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
 import { UploadDragger } from "@/components/photographer/upload-dragger";
 import {
   FolderDetailPageSkeleton,
@@ -41,14 +44,17 @@ import {
   getFolderCoverUrl,
   folderCoverObjectPositionStyle,
   FALLBACK_SHARE_EXPIRY_PRESETS,
+  FoldersApiError,
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
+  parseFolderCoverFocal,
   patchFolderStatus,
   deleteAllFolderFinalMedia,
   deleteAllFolderRawMedia,
   deleteFolderFinalMedia,
   deleteFolderRawMedia,
   regenerateFolderShare,
+  updateFolder,
   uploadFolderFinalMedia,
   uploadFolderRawMedia,
   type ApiFolder,
@@ -151,6 +157,10 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const rawSelectAllRef = useRef<HTMLInputElement>(null);
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
 
+  const [focalEditOpen, setFocalEditOpen] = useState(false);
+  const [focalDraft, setFocalDraft] = useState({ x: 50, y: 50 });
+  const [savingFocal, setSavingFocal] = useState(false);
+
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
   }, []);
@@ -194,6 +204,10 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return () => {
       cancelled = true;
     };
+  }, [folderId]);
+
+  useEffect(() => {
+    setFocalEditOpen(false);
   }, [folderId]);
 
   const shareUrl = useMemo(
@@ -360,6 +374,41 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveCoverFocal() {
+    if (!folder || savingFocal) return;
+    setSavingFocal(true);
+    try {
+      const updated = await updateFolder(folder._id, {
+        coverFocalX: focalDraft.x,
+        coverFocalY: focalDraft.y,
+      });
+      setFolder(updated);
+      showToast("Cover framing saved.", "success");
+      setFocalEditOpen(false);
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not save cover framing.",
+        "error",
+      );
+    } finally {
+      setSavingFocal(false);
+    }
+  }
+
+  function openFocalEditor() {
+    if (!folder) return;
+    setFocalDraft(parseFolderCoverFocal(folder));
+    setFocalEditOpen(true);
+  }
+
+  function cancelFocalEditor() {
+    setFocalEditOpen(false);
   }
 
   function mediaDeleteBlocked() {
@@ -650,19 +699,35 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       </nav>
 
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-2xl border border-zinc-200/60 bg-zinc-900 shadow-lg shadow-zinc-900/10 ring-1 ring-black/5 dark:border-zinc-800/80">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={coverSrc}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-          style={folderCoverObjectPositionStyle(folder)}
-        />
-        <div
-          className="absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/45 to-zinc-900/20"
-          aria-hidden
-        />
-        <div className="relative flex min-h-[200px] flex-col justify-between gap-5 p-5 md:min-h-[240px] md:gap-6 md:p-7">
+      <section
+        className={cn(
+          "relative flex flex-col overflow-hidden rounded-2xl border border-zinc-200/60 bg-zinc-900 shadow-lg shadow-zinc-900/15 ring-1 ring-black/5 transition-[box-shadow,ring-color] duration-300 ease-out dark:border-zinc-800/80",
+          focalEditOpen &&
+            "shadow-xl shadow-black/25 ring-2 ring-brand/40 ring-offset-0 dark:ring-brand/45",
+        )}
+      >
+        <div className="absolute inset-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={coverSrc}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover transition-[object-position] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            style={
+              focalEditOpen
+                ? { objectPosition: `${focalDraft.x}% ${focalDraft.y}%` }
+                : folderCoverObjectPositionStyle(folder)
+            }
+          />
+          <div
+            className={cn(
+              "absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/45 to-zinc-900/20 transition-opacity duration-300",
+              focalEditOpen && "from-zinc-950/[0.98] via-zinc-950/50",
+            )}
+            aria-hidden
+          />
+        </div>
+
+        <div className="relative z-10 flex min-h-[200px] flex-1 flex-col justify-between gap-5 p-5 md:min-h-[240px] md:gap-6 md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <Link
               href="/dashboard/galleries"
@@ -672,7 +737,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               Back to galleries
             </Link>
             <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${statusStyles(folderStatus)}`}
+              className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider transition-opacity duration-200 ${statusStyles(folderStatus)} ${focalEditOpen ? "opacity-90" : ""}`}
             >
               {statusLabel(folderStatus)}
             </span>
@@ -702,7 +767,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 type="button"
                 onClick={markCompleted}
                 disabled={busy || folderStatus === "COMPLETED"}
-                className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow-md shadow-black/10 ring-1 ring-black/5 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow-md shadow-black/10 ring-1 ring-black/5 transition hover:bg-zinc-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:scale-100"
               >
                 {folderStatus === "COMPLETED" ? (
                   <>
@@ -713,6 +778,77 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   "Mark completed"
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => (focalEditOpen ? cancelFocalEditor() : openFocalEditor())}
+                disabled={busy || savingFocal}
+                aria-expanded={focalEditOpen}
+                aria-controls="folder-cover-framing-panel"
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-md backdrop-blur-md transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100",
+                  focalEditOpen
+                    ? "border border-white/45 bg-white/20 text-white ring-2 ring-white/25"
+                    : "border border-white/35 bg-white/10 text-white hover:bg-white/18",
+                )}
+              >
+                {focalEditOpen ? (
+                  <ChevronUp className="h-4 w-4 shrink-0 opacity-95" aria-hidden />
+                ) : (
+                  <Focus className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                )}
+                {focalEditOpen ? "Close editor" : "Cover framing"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="folder-cover-framing-panel"
+          className={cn(
+            "relative z-10 border-white/10 transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+            focalEditOpen
+              ? "max-h-[min(460px,80vh)] border-t border-white/15 opacity-100"
+              : "pointer-events-none max-h-0 border-t-0 opacity-0",
+          )}
+          aria-hidden={!focalEditOpen}
+        >
+          <div className="bg-gradient-to-b from-zinc-950/65 via-zinc-950/90 to-zinc-950 backdrop-blur-2xl">
+            <div className="px-5 py-5 md:px-7 md:py-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between lg:gap-10">
+                <div className="min-w-0 flex-1 space-y-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/40">
+                    Cover framing
+                  </p>
+                  <CoverFocalPreview
+                    imageUrl={coverSrc}
+                    focalX={focalDraft.x}
+                    focalY={focalDraft.y}
+                    onFocalChange={(x, y) => setFocalDraft({ x, y })}
+                    disabled={savingFocal}
+                    embeddedDark
+                    compactFooter
+                    frameClassName="aspect-[21/10] w-full max-h-[min(14rem,36vw)] rounded-xl sm:max-h-56"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center lg:w-auto lg:flex-col lg:items-stretch">
+                  <button
+                    type="button"
+                    onClick={() => void saveCoverFocal()}
+                    disabled={savingFocal}
+                    className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full bg-white px-6 py-2.5 text-sm font-semibold text-zinc-900 shadow-lg shadow-black/20 transition hover:bg-zinc-100 active:scale-[0.98] disabled:opacity-50 lg:min-w-[10.5rem] motion-reduce:active:scale-100"
+                  >
+                    {savingFocal ? "Saving…" : "Save framing"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelFocalEditor}
+                    disabled={savingFocal}
+                    className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border border-white/25 bg-white/5 px-6 py-2.5 text-sm font-semibold text-white/90 backdrop-blur-sm transition hover:bg-white/12 active:scale-[0.98] disabled:opacity-50 lg:min-w-[10.5rem] motion-reduce:active:scale-100"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

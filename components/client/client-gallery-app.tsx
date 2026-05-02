@@ -13,6 +13,7 @@ import {
   type ShareGalleryAsset,
 } from "@/lib/share-gallery-api";
 import { useToast } from "@/components/toast-provider";
+import { folderCoverObjectPositionStyle, type ApiFolder } from "@/lib/folders-api";
 import {
   CalendarDays,
   Check,
@@ -402,9 +403,14 @@ export function ClientGalleryApp({ token }: { token: string }) {
               src={gallery.coverImageUrl}
               alt={displayTitle ? `Cover — ${displayTitle}` : "Gallery cover"}
               className="absolute inset-0 h-full w-full object-cover"
-              style={{
-                objectPosition: `${gallery.coverFocalX ?? 50}% ${gallery.coverFocalY ?? 50}%`,
-              }}
+              style={folderCoverObjectPositionStyle({
+                _id: gallery.folderId ?? "",
+                client: "",
+                eventDate: "",
+                description: "",
+                coverFocalX: gallery.coverFocalX,
+                coverFocalY: gallery.coverFocalY,
+              } as ApiFolder)}
             />
             <div
               className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/60 via-black/30 to-black/[0.88]"

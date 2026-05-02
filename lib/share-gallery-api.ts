@@ -308,10 +308,12 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
       : "");
   const coverImageUrl = coverRaw ? resolvePublicGalleryImageUrl(coverRaw) : undefined;
 
-  const focal =
+  /** Focal may live on `folder`, on the response root, or only on root when folder is shaped oddly. */
+  const focalPayload =
     folder && typeof folder === "object"
-      ? parseFolderCoverFocal(folder as Record<string, unknown>)
-      : { x: 50, y: 50 };
+      ? ({ ...root, ...folder } as Record<string, unknown>)
+      : (root as Record<string, unknown>);
+  const focal = parseFolderCoverFocal(focalPayload);
 
   return {
     folderId,

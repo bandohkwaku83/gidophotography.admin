@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import {
+  folderCoverObjectPositionStyle,
   getFolderClientName,
   getFolderCoverUrl,
   type ApiFolder,
@@ -41,6 +42,7 @@ export function GalleryPreviewCard({
           src={cover}
           alt=""
           className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+          style={folderCoverObjectPositionStyle(folder)}
         />
         <div className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-zinc-700 opacity-0 shadow-sm backdrop-blur-sm transition group-hover:opacity-100 dark:bg-zinc-900/90 dark:text-zinc-200">
           <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
