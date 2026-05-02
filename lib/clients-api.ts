@@ -126,7 +126,10 @@ export async function createClient(input: ClientInput): Promise<ApiClient> {
       body,
     );
   }
-  return (body as { client: ApiClient }).client;
+  if (body && typeof body === "object" && "client" in body) {
+    return (body as { client: ApiClient }).client;
+  }
+  return body as ApiClient;
 }
 
 export async function updateClient(

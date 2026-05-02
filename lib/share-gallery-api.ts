@@ -149,10 +149,18 @@ function finalFromRow(item: unknown, idx: number): ShareGalleryFinal | null {
     str(o.previewUrlWhenLocked) ||
     str(o.lockedPreview);
 
+  const truthy = (v: unknown) => v === true || v === "true";
+  const lockStatus =
+    str(o.lockStatus).toLowerCase() || str(o.lock_status).toLowerCase();
   const locked =
     bool(o.locked) ||
-    bool(o.isLocked) ||
-    str(o.lockStatus).toLowerCase() === "locked";
+    truthy(o.isLocked) ||
+    truthy(o.is_locked) ||
+    truthy(o.paymentLocked) ||
+    truthy(o.payment_locked) ||
+    truthy(o.downloadLocked) ||
+    truthy(o.download_locked) ||
+    lockStatus === "locked";
 
   const url = resolvePublicGalleryImageUrl(urlRaw);
   const lockedPreviewUrl = lockedPreviewRaw

@@ -16,6 +16,8 @@ export type ApiFolderShare = {
   linkExpiryPreset?: string | null;
   selectionSubmittedAt?: string | null;
   selectionLocked?: boolean;
+  /** When true, client share treats finals as payment-locked until unlock (some backends nest here). */
+  finalsLocked?: boolean;
 };
 
 /**
@@ -85,6 +87,8 @@ export type ApiFolder = {
   finalMedia?: ApiFolderMedia[];
   /** When false, client gallery may hide final delivery UI until backend enables it. */
   finalDelivery?: boolean;
+  /** When true, finals are payment-locked for the client until unlock (some backends send this without per-media `locked`). */
+  finalsPaymentLocked?: boolean;
   /** Extra protection hints for client gallery (e.g. discourage saving screenshots). */
   rightsProtection?: boolean;
   /** Nested bucket some APIs use */
@@ -409,8 +413,22 @@ export async function deleteFolder(id: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 function unwrapFolder(body: unknown): ApiFolder {
-  if (body && typeof body === "object" && "folder" in body) {
-    return (body as { folder: ApiFolder }).folder;
+  if (!body || typeof body !== "object") {
+    return body as ApiFolder;
+  }
+  const root = body as Record<string, unknown>;
+  if (root.folder && typeof root.folder === "object") {
+    return root.folder as ApiFolder;
+  }
+  const data = root.data;
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
+    if (d.folder && typeof d.folder === "object") {
+      return d.folder as ApiFolder;
+    }
+    if (typeof d._id === "string" || typeof d.id === "string") {
+      return data as ApiFolder;
+    }
   }
   return body as ApiFolder;
 }
@@ -733,7 +751,11 @@ export async function uploadFolderFinalMedia(
 export async function unlockFolderFinalDelivery(folderId: string): Promise<ApiFolder> {
   const res = await authedFetch(
     `/api/folders/${encodeURIComponent(folderId)}/final-delivery/unlock`,
-    { method: "PATCH" },
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    },
   );
   const body = await parseJson(res);
   console.log("[folders:final-delivery:unlock]", { status: res.status, ok: res.ok, body });
@@ -954,15 +976,64 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
   };
 }
 
+/** True when the folder detail API indicates client finals are still payment-locked. */
+export function folderFinalsPaymentLocked(folder: ApiFolder): boolean {
+  const root = folder as Record<string, unknown>;
+  if (truthyFolderFlag(root.finalsPaymentLocked) || truthyFolderFlag(root.finals_payment_locked)) {
+    return true;
+  }
+  if (truthyFolderFlag(root.finalDeliveryLocked) || truthyFolderFlag(root.final_delivery_locked)) {
+    return true;
+  }
+  const share = root.share;
+  if (share && typeof share === "object") {
+    const s = share as Record<string, unknown>;
+    const shareLockKeys = [
+      "finalsPaymentLocked",
+      "finals_payment_locked",
+      "finalsLocked",
+      "finals_locked",
+      "finalDeliveryLocked",
+      "final_delivery_locked",
+      "finalLocked",
+      "final_locked",
+      "paymentLockOnFinals",
+      "payment_lock_on_finals",
+    ] as const;
+    for (const k of shareLockKeys) {
+      if (truthyFolderFlag(s[k])) return true;
+    }
+  }
+  return false;
+}
+
+function truthyFolderFlag(v: unknown): boolean {
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
 export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
   const id = m._id || m.id || `f-${Math.random().toString(36).slice(2, 10)}`;
   const name = m.originalName || m.originalFilename || m.filename || m.name || "Final";
   const urlRaw = m.url || m.previewUrl || m.thumbUrl || "";
   const url = resolveCoverUrl(urlRaw) || urlRaw || "";
+  const o = m as Record<string, unknown>;
+  const truthyFlag = (v: unknown) => v === true || v === "true";
+  const lockStatus =
+    typeof o.lockStatus === "string"
+      ? o.lockStatus
+      : typeof o.lock_status === "string"
+        ? o.lock_status
+        : "";
   const locked =
     m.locked === true ||
-    (m as Record<string, unknown>).isLocked === true ||
-    (m as Record<string, unknown>).lockImages === true;
+    truthyFlag(o.isLocked) ||
+    truthyFlag(o.is_locked) ||
+    truthyFlag(o.lockImages) ||
+    truthyFlag(o.paymentLocked) ||
+    truthyFlag(o.payment_locked) ||
+    truthyFlag(o.downloadLocked) ||
+    truthyFlag(o.download_locked) ||
+    lockStatus.toLowerCase() === "locked";
   return { id, name, url, locked };
 }
 

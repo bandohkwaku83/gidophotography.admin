@@ -287,8 +287,6 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     [folder],
   );
 
-  const hasLockedFinals = useMemo(() => finalAssets.some((f) => f.locked), [finalAssets]);
-
   const selectionRows = useMemo(
     () => (folder ? extractSelectionMediaList(folder).map(apiFolderMediaToDemoAsset) : []),
     [folder],
@@ -434,8 +432,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (!folder || unlockingFinals || busy) return;
     setUnlockingFinals(true);
     try {
-      const updated = await unlockFolderFinalDelivery(folder._id);
-      setFolder(updated);
+      await unlockFolderFinalDelivery(folder._id);
+      await refreshFolder();
       showToast("Finals unlocked for client download.", "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Could not unlock finals.", "error");
@@ -1423,9 +1421,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   Final delivery
                 </h3>
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                  Upload finished edits for client delivery. Files are stored on the server.
+                  Upload finished edits for client delivery.
                 </p>
-                {hasLockedFinals ? (
+                {finalAssets.length > 0 ? (
                   <button
                     type="button"
                     onClick={() => void onUnlockFinalDelivery()}

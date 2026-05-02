@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   ChevronLeft,
@@ -8,58 +8,33 @@ import {
   Clock,
   MapPin,
   Plus,
-  Camera,
-  Heart,
-  Briefcase,
-  CircleDot,
 } from "lucide-react";
+import { useToast } from "@/components/toast-provider";
+import { NewBookingModal, type NewBookingDraft } from "@/components/schedules/new-booking-modal";
+import {
+  formatBookedTimeLabel,
+  type BookedShoot,
+  type ShootKind,
+  KIND_META,
+  SHOOT_KINDS_ORDER,
+  timeSortMinutes,
+} from "@/components/schedules/booking-types";
+import {
+  apiColorToDotClass,
+  apiShootTypeToKind,
+  getBookingsMeta,
+  getBookingsWeekSummary,
+  kindToApiShootType,
+  listBookings,
+  mapApiBookingToBookedShoot,
+  createBooking,
+  formatHmToApi12h,
+  type BookingShootTypeMeta,
+} from "@/lib/bookings-api";
+import { ApiError } from "@/lib/clients-api";
 import { cn } from "@/lib/utils";
 
-type ShootKind = "wedding" | "portrait" | "commercial" | "other";
-
-type BookedShoot = {
-  id: string;
-  title: string;
-  client: string;
-  date: string;
-  startTime: string;
-  endTime?: string;
-  location?: string;
-  kind: ShootKind;
-  notes?: string;
-};
-
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-const KIND_META: Record<
-  ShootKind,
-  { label: string; dot: string; chip: string; Icon: typeof Heart }
-> = {
-  wedding: {
-    label: "Wedding",
-    dot: "bg-rose-500",
-    chip: "bg-rose-500/15 text-rose-800 ring-rose-500/25 dark:text-rose-200 dark:ring-rose-500/30",
-    Icon: Heart,
-  },
-  portrait: {
-    label: "Portrait",
-    dot: "bg-violet-500",
-    chip: "bg-violet-500/15 text-violet-800 ring-violet-500/25 dark:text-violet-200 dark:ring-violet-500/30",
-    Icon: Camera,
-  },
-  commercial: {
-    label: "Commercial",
-    dot: "bg-amber-500",
-    chip: "bg-amber-500/15 text-amber-900 ring-amber-500/25 dark:text-amber-100 dark:ring-amber-500/35",
-    Icon: Briefcase,
-  },
-  other: {
-    label: "Other",
-    dot: "bg-sky-500",
-    chip: "bg-sky-500/15 text-sky-800 ring-sky-500/25 dark:text-sky-200 dark:ring-sky-500/30",
-    Icon: CircleDot,
-  },
-};
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -72,81 +47,6 @@ function toIso(y: number, m: number, day: number) {
 function parseIso(iso: string) {
   const [yy, mm, dd] = iso.split("-").map(Number);
   return { y: yy, m: mm - 1, d: dd };
-}
-
-/** Demo bookings for the visible month (UI only). */
-function mockShootsForMonth(year: number, month: number): BookedShoot[] {
-  const iso = (day: number) => toIso(year, month, day);
-  return [
-    {
-      id: "s1",
-      title: "Rivera engagement",
-      client: "Rivera",
-      date: iso(4),
-      startTime: "10:00 AM",
-      endTime: "12:30 PM",
-      location: "Green Park",
-      kind: "portrait",
-      notes: "Golden hour priority",
-    },
-    {
-      id: "s2",
-      title: "Chen wedding — ceremony",
-      client: "Chen",
-      date: iso(8),
-      startTime: "3:00 PM",
-      endTime: "6:00 PM",
-      location: "St. Mary’s Chapel",
-      kind: "wedding",
-    },
-    {
-      id: "s3",
-      title: "Brand shoot — spring catalog",
-      client: "Northline Co.",
-      date: iso(8),
-      startTime: "9:00 AM",
-      endTime: "4:00 PM",
-      location: "Studio B",
-      kind: "commercial",
-    },
-    {
-      id: "s4",
-      title: "Patel family portraits",
-      client: "Patel",
-      date: iso(14),
-      startTime: "11:00 AM",
-      location: "Home session",
-      kind: "portrait",
-    },
-    {
-      id: "s5",
-      title: "Okonkwo wedding — reception",
-      client: "Okonkwo",
-      date: iso(21),
-      startTime: "6:00 PM",
-      location: "Harbor Events",
-      kind: "wedding",
-    },
-    {
-      id: "s6",
-      title: "Headshots — legal firm",
-      client: "Braddock LLP",
-      date: iso(26),
-      startTime: "1:00 PM",
-      endTime: "5:00 PM",
-      location: "Office tower — 12th fl",
-      kind: "commercial",
-    },
-    {
-      id: "s7",
-      title: "Styled editorial",
-      client: "Magazine pitch",
-      date: iso(29),
-      startTime: "8:00 AM",
-      location: "Downtown loft",
-      kind: "other",
-    },
-  ];
 }
 
 function buildMonthGrid(year: number, month: number): (number | null)[][] {
@@ -174,35 +74,117 @@ function isToday(y: number, m: number, day: number) {
   return t.getFullYear() === y && t.getMonth() === m && t.getDate() === day;
 }
 
+function shootDotClass(s: BookedShoot): string {
+  return apiColorToDotClass(s.shootColor) ?? KIND_META[s.kind].dot;
+}
+
 export default function SchedulesPage() {
+  const { showToast } = useToast();
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [kindFilter, setKindFilter] = useState<ShootKind | "all">("all");
 
-  const shoots = useMemo(
-    () => mockShootsForMonth(viewYear, viewMonth),
-    [viewYear, viewMonth],
-  );
+  const [bookings, setBookings] = useState<BookedShoot[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(true);
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [shootTypesMeta, setShootTypesMeta] = useState<BookingShootTypeMeta[]>([]);
+  const [legendMeta, setLegendMeta] = useState<BookingShootTypeMeta[]>([]);
+  const [weekBookedCount, setWeekBookedCount] = useState<number | null>(null);
 
-  const filteredShoots = useMemo(
-    () => (kindFilter === "all" ? shoots : shoots.filter((s) => s.kind === kindFilter)),
-    [shoots, kindFilter],
-  );
+  const filterKeys = useMemo((): readonly (ShootKind | "all")[] => {
+    if (shootTypesMeta.length > 0) {
+      const kinds: ShootKind[] = [];
+      for (const t of shootTypesMeta) {
+        const k = apiShootTypeToKind(t.id);
+        if (!kinds.includes(k)) kinds.push(k);
+      }
+      return ["all", ...kinds];
+    }
+    return ["all", ...SHOOT_KINDS_ORDER];
+  }, [shootTypesMeta]);
+
+  const loadMonth = useCallback(async () => {
+    setBookingsLoading(true);
+    try {
+      const typeParam =
+        kindFilter === "all" ? "" : kindToApiShootType(kindFilter);
+      const res = await listBookings({
+        year: viewYear,
+        month: viewMonth + 1,
+        type: typeParam,
+      });
+      setBookings(res.bookings.map(mapApiBookingToBookedShoot));
+    } catch (e) {
+      const msg =
+        e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Could not load bookings.";
+      showToast(msg, "error");
+      setBookings([]);
+    } finally {
+      setBookingsLoading(false);
+    }
+  }, [viewYear, viewMonth, kindFilter, showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const meta = await getBookingsMeta();
+        if (cancelled) return;
+        setShootTypesMeta(meta.shootTypes);
+        setLegendMeta(meta.legend.length > 0 ? meta.legend : meta.shootTypes);
+      } catch (e) {
+        if (!cancelled) {
+          showToast(e instanceof Error ? e.message : "Could not load booking types.", "error");
+          setShootTypesMeta([]);
+          setLegendMeta([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const w = await getBookingsWeekSummary();
+        if (!cancelled) setWeekBookedCount(w.bookedCount);
+      } catch {
+        if (!cancelled) setWeekBookedCount(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    void loadMonth();
+  }, [loadMonth]);
+
+  const shoots = useMemo(() => {
+    return bookings.filter((b) => {
+      const { y, m } = parseIso(b.date);
+      return y === viewYear && m === viewMonth;
+    });
+  }, [bookings, viewYear, viewMonth]);
 
   const byDate = useMemo(() => {
-    const m = new Map<string, BookedShoot[]>();
-    for (const s of filteredShoots) {
-      const list = m.get(s.date) ?? [];
+    const map = new Map<string, BookedShoot[]>();
+    for (const s of shoots) {
+      const list = map.get(s.date) ?? [];
       list.push(s);
-      m.set(s.date, list);
+      map.set(s.date, list);
     }
-    for (const [, list] of m) {
-      list.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    for (const [, list] of map) {
+      list.sort((a, b) => timeSortMinutes(a.startTime) - timeSortMinutes(b.startTime));
     }
-    return m;
-  }, [filteredShoots]);
+    return map;
+  }, [shoots]);
 
   const grid = useMemo(() => buildMonthGrid(viewYear, viewMonth), [viewYear, viewMonth]);
 
@@ -242,36 +224,57 @@ export default function SchedulesPage() {
     selectedDay != null ? toIso(viewYear, viewMonth, selectedDay) : null;
   const selectedShoots = selectedIso ? (byDate.get(selectedIso) ?? []) : [];
 
-  const weekStart = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    const dow = d.getDay();
-    d.setDate(d.getDate() - dow);
-    return d;
-  }, []);
-
-  const weekEnd = useMemo(() => {
-    const e = new Date(weekStart);
-    e.setDate(e.getDate() + 6);
-    e.setHours(23, 59, 59, 999);
-    return e;
-  }, [weekStart]);
-
-  const thisWeekCount = useMemo(() => {
-    return shoots.filter((s) => {
-      const { y, m, d } = parseIso(s.date);
-      const dt = new Date(y, m, d);
-      return dt >= weekStart && dt <= weekEnd;
-    }).length;
-  }, [shoots, weekStart, weekEnd]);
+  const modalDefaultDate =
+    selectedIso ??
+    toIso(today.getFullYear(), today.getMonth(), today.getDate());
 
   const upcomingSorted = useMemo(() => {
-    return [...filteredShoots].sort((a, b) => {
+    return [...shoots].sort((a, b) => {
       const c = a.date.localeCompare(b.date);
       if (c !== 0) return c;
-      return a.startTime.localeCompare(b.startTime);
+      return timeSortMinutes(a.startTime) - timeSortMinutes(b.startTime);
     });
-  }, [filteredShoots]);
+  }, [shoots]);
+
+  async function handleSaveBooking(draft: NewBookingDraft) {
+    const { booking } = await createBooking({
+      title: draft.title,
+      clientId: draft.clientId,
+      date: draft.date,
+      shootType: kindToApiShootType(draft.kind),
+      start: formatHmToApi12h(draft.startTime),
+      end: draft.endTime ? formatHmToApi12h(draft.endTime) : "",
+      location: draft.location?.trim() ?? "",
+      description: draft.description?.trim() ?? "",
+    });
+    const mapped = mapApiBookingToBookedShoot(booking);
+    setBookings((prev) => {
+      const rest = prev.filter((b) => b.id !== mapped.id);
+      return [...rest, mapped];
+    });
+    const { y, m, d } = parseIso(draft.date);
+    setViewYear(y);
+    setViewMonth(m);
+    setSelectedDay(d);
+    showToast("Booking saved.", "success");
+    void (async () => {
+      try {
+        const w = await getBookingsWeekSummary();
+        setWeekBookedCount(w.bookedCount);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }
+
+  function filterChipLabel(k: ShootKind | "all"): string {
+    if (k === "all") return "All";
+    if (shootTypesMeta.length > 0) {
+      const hit = shootTypesMeta.find((t) => apiShootTypeToKind(t.id) === k);
+      if (hit) return hit.label;
+    }
+    return KIND_META[k].label;
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -280,13 +283,10 @@ export default function SchedulesPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             Schedules
           </h1>
-          <p className="mt-1 max-w-xl text-sm text-zinc-500 dark:text-zinc-400">
-            Plan and track booked shoots. Connect a calendar backend later—this page is a layout
-            preview with sample bookings.
-          </p>
         </div>
         <button
           type="button"
+          onClick={() => setBookingModalOpen(true)}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
         >
           <Plus className="h-4 w-4" aria-hidden />
@@ -295,9 +295,9 @@ export default function SchedulesPage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {(["all", "wedding", "portrait", "commercial", "other"] as const).map((k) => {
+        {filterKeys.map((k) => {
           const active = kindFilter === k;
-          const label = k === "all" ? "All" : KIND_META[k].label;
+          const label = filterChipLabel(k);
           return (
             <button
               key={k}
@@ -350,7 +350,11 @@ export default function SchedulesPage() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-7 gap-px rounded-xl bg-zinc-200 dark:bg-zinc-800">
+          {bookingsLoading ? (
+            <p className="mt-6 text-center text-sm text-zinc-500 dark:text-zinc-400">Loading bookings…</p>
+          ) : null}
+
+          <div className={cn("mt-4 grid grid-cols-7 gap-px rounded-xl bg-zinc-200 dark:bg-zinc-800", bookingsLoading && "opacity-50")}>
             {WEEKDAYS.map((wd) => (
               <div
                 key={wd}
@@ -398,8 +402,8 @@ export default function SchedulesPage() {
                     {dayShoots.slice(0, 4).map((s) => (
                       <span
                         key={s.id}
-                        title={`${s.title} · ${s.startTime}`}
-                        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", KIND_META[s.kind].dot)}
+                        title={`${s.title} · ${formatBookedTimeLabel(s.startTime)}`}
+                        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", shootDotClass(s))}
                       />
                     ))}
                     {dayShoots.length > 4 ? (
@@ -412,12 +416,24 @@ export default function SchedulesPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-            {(Object.keys(KIND_META) as ShootKind[]).map((k) => (
-              <div key={k} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <span className={cn("h-2 w-2 rounded-full", KIND_META[k].dot)} />
-                {KIND_META[k].label}
-              </div>
-            ))}
+            {legendMeta.length > 0
+              ? legendMeta.map((t) => (
+                  <div key={t.id} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <span
+                      className={cn(
+                        "h-2 w-2 shrink-0 rounded-full",
+                        apiColorToDotClass(t.color) ?? "bg-zinc-400",
+                      )}
+                    />
+                    {t.label}
+                  </div>
+                ))
+              : SHOOT_KINDS_ORDER.map((k) => (
+                  <div key={k} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <span className={cn("h-2 w-2 rounded-full", KIND_META[k].dot)} />
+                    {KIND_META[k].label}
+                  </div>
+                ))}
           </div>
         </section>
 
@@ -425,21 +441,30 @@ export default function SchedulesPage() {
           <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">This week</p>
             <p className="mt-2 text-3xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-              {thisWeekCount}
+              {weekBookedCount ?? "—"}
             </p>
-            <p className="mt-1 text-xs text-zinc-500">Booked shoots (sample data)</p>
+            <p className="mt-1 text-xs text-zinc-500">Booked shoots</p>
           </div>
 
           <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-              {selectedIso
-                ? new Date(selectedIso + "T12:00:00").toLocaleDateString(undefined, {
-                    weekday: "long",
-                    month: "short",
-                    day: "numeric",
-                  })
-                : "Pick a day"}
-            </h3>
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                {selectedIso
+                  ? new Date(selectedIso + "T12:00:00").toLocaleDateString(undefined, {
+                      weekday: "long",
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "Pick a day"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setBookingModalOpen(true)}
+                className="shrink-0 rounded-lg border border-zinc-200 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Add
+              </button>
+            </div>
             {selectedShoots.length === 0 ? (
               <p className="mt-3 text-sm text-zinc-500">No shoots on this day.</p>
             ) : (
@@ -464,12 +489,12 @@ export default function SchedulesPage() {
                           {meta.label}
                         </span>
                       </div>
-                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{s.client}</p>
+                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{s.clientName}</p>
                       <div className="mt-2 flex flex-col gap-1 text-xs text-zinc-500 dark:text-zinc-400">
                         <span className="inline-flex items-center gap-1.5">
                           <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                          {s.startTime}
-                          {s.endTime ? ` – ${s.endTime}` : ""}
+                          {formatBookedTimeLabel(s.startTime)}
+                          {s.endTime ? ` – ${formatBookedTimeLabel(s.endTime)}` : ""}
                         </span>
                         {s.location ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -477,9 +502,9 @@ export default function SchedulesPage() {
                             {s.location}
                           </span>
                         ) : null}
-                        {s.notes ? (
-                          <p className="mt-1 border-t border-zinc-200/80 pt-2 text-[11px] leading-snug dark:border-zinc-700">
-                            {s.notes}
+                        {s.description ? (
+                          <p className="mt-1 border-t border-zinc-200/80 pt-2 text-[11px] leading-snug text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+                            {s.description}
                           </p>
                         ) : null}
                       </div>
@@ -514,7 +539,7 @@ export default function SchedulesPage() {
                       <span
                         className={cn(
                           "mt-0.5 h-2 w-2 shrink-0 rounded-full",
-                          meta.dot,
+                          shootDotClass(s),
                         )}
                       />
                       <span className="min-w-0 flex-1">
@@ -522,7 +547,7 @@ export default function SchedulesPage() {
                           {s.title}
                         </span>
                         <span className="mt-0.5 block text-[11px] text-zinc-500">
-                          {when} · {s.startTime}
+                          {when} · {formatBookedTimeLabel(s.startTime)}
                         </span>
                       </span>
                     </button>
@@ -533,6 +558,14 @@ export default function SchedulesPage() {
           </div>
         </aside>
       </div>
+
+      <NewBookingModal
+        open={bookingModalOpen}
+        onClose={() => setBookingModalOpen(false)}
+        defaultDate={modalDefaultDate}
+        shootTypes={shootTypesMeta}
+        onSave={handleSaveBooking}
+      />
     </div>
   );
 }
