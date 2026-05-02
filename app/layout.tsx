@@ -14,12 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() || "http://localhost:3000",
+  ),
   title: "Gido Studio — proofing & delivery",
   description: "Photographer and client gallery experience (UI demo).",
-  icons: {
-    icon: [{ url: "/images/icon.png", type: "image/png" }],
-    apple: "/images/icon.png",
-  },
 };
 
 export default function RootLayout({
