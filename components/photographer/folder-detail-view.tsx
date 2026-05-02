@@ -20,6 +20,8 @@ import {
   Sparkles,
   Trash2,
   User,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
@@ -53,13 +55,47 @@ import {
   deleteAllFolderRawMedia,
   deleteFolderFinalMedia,
   deleteFolderRawMedia,
+  postFolderMediaDuplicatePreview,
   regenerateFolderShare,
+  unlockFolderFinalDelivery,
   updateFolder,
   uploadFolderFinalMedia,
   uploadFolderRawMedia,
   type ApiFolder,
+  type DuplicateUploadAction,
+  type FinalDeliveryUploadFields,
   type ShareLinkExpiryPreset,
+  type UploadFolderFinalMediaFormOptions,
+  type UploadFolderMediaFormOptions,
 } from "@/lib/folders-api";
+import { getDuplicateUploadPreference } from "@/lib/upload-preferences";
+
+function rawUploadFormOptions(duplicateAction: DuplicateUploadAction): UploadFolderMediaFormOptions {
+  return { duplicateAction, markUploadComplete: true };
+}
+
+function finalUploadFormOptions(
+  duplicateAction: DuplicateUploadAction,
+  files: File[],
+  selectionMediaId: string | undefined,
+  delivery: FinalDeliveryUploadFields,
+): UploadFolderFinalMediaFormOptions {
+  const opts: UploadFolderFinalMediaFormOptions = {
+    duplicateAction,
+    markUploadComplete: true,
+    clientHasPaidForFinals: delivery.clientHasPaidForFinals,
+  };
+  if (files.length === 1 && selectionMediaId) {
+    opts.selectionMediaId = selectionMediaId;
+  }
+  if (delivery.clientHasPaidForFinals === false) {
+    if (delivery.amountRemainingGHS != null && String(delivery.amountRemainingGHS).trim() !== "") {
+      opts.amountRemainingGHS = String(delivery.amountRemainingGHS).trim();
+    }
+    opts.lockImagesBeforeUpload = delivery.lockImagesBeforeUpload === true;
+  }
+  return opts;
+}
 
 type Tab = "uploads" | "selection" | "finals";
 
@@ -161,6 +197,23 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [focalDraft, setFocalDraft] = useState({ x: 50, y: 50 });
   const [savingFocal, setSavingFocal] = useState(false);
 
+  /** After duplicate-preview: user chooses replace vs skip before uploading bytes. */
+  const [duplicateFilenamePrompt, setDuplicateFilenamePrompt] = useState<null | {
+    kind: "raw" | "final";
+    files: File[];
+    selectionMediaId?: string;
+  }>(null);
+
+  /** Carries payment/lock fields through duplicate-modal flows for final uploads. */
+  const pendingFinalDeliveryRef = useRef<FinalDeliveryUploadFields | null>(null);
+
+  const [finalWizardOpen, setFinalWizardOpen] = useState(false);
+  const [finalWizardFiles, setFinalWizardFiles] = useState<File[]>([]);
+  const [finalWizardStep, setFinalWizardStep] = useState<"choose" | "unpaid">("choose");
+  const [finalWizardBalance, setFinalWizardBalance] = useState("");
+  const [finalWizardLock, setFinalWizardLock] = useState(false);
+  const [unlockingFinals, setUnlockingFinals] = useState(false);
+
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
   }, []);
@@ -234,6 +287,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     [folder],
   );
 
+  const hasLockedFinals = useMemo(() => finalAssets.some((f) => f.locked), [finalAssets]);
+
   const selectionRows = useMemo(
     () => (folder ? extractSelectionMediaList(folder).map(apiFolderMediaToDemoAsset) : []),
     [folder],
@@ -299,49 +354,208 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (el) el.indeterminate = finalSomeSelected;
   }, [finalSomeSelected]);
 
-  async function onRawUpload(files: File[]) {
-    if (!folder || busy || files.length === 0) return;
-    setBusy(true);
-    setUploadProgress({ kind: "raw", computable: false, percent: 0 });
-    try {
-      await uploadFolderRawMedia(folder._id, files, (loaded, total, lengthComputable) => {
+  const uploadProgressHandler = useCallback(
+    (kind: "raw" | "final") =>
+      (loaded: number, total: number, lengthComputable: boolean) => {
         const computable = lengthComputable && total > 0;
         setUploadProgress({
-          kind: "raw",
+          kind,
           computable,
           percent: computable ? Math.min(100, Math.round((100 * loaded) / total)) : 0,
         });
+      },
+    [],
+  );
+
+  const mergeFinalFormOpts = useCallback(
+    (
+      dup: DuplicateUploadAction,
+      files: File[],
+      selectionMediaId?: string,
+    ): UploadFolderFinalMediaFormOptions => {
+      const d = pendingFinalDeliveryRef.current;
+      return finalUploadFormOptions(dup, files, selectionMediaId, d ?? { clientHasPaidForFinals: true });
+    },
+    [],
+  );
+
+  function openFinalUploadWizard(files: File[]) {
+    if (!folder || busy || files.length === 0) return;
+    setFinalWizardFiles(files);
+    setFinalWizardStep("choose");
+    setFinalWizardBalance("");
+    setFinalWizardLock(false);
+    setFinalWizardOpen(true);
+  }
+
+  async function executeFinalUploadPipeline(files: File[], delivery: FinalDeliveryUploadFields) {
+    if (!folder || files.length === 0) return;
+    pendingFinalDeliveryRef.current = delivery;
+    setBusy(true);
+    let awaitingConflictChoice = false;
+    const selectionMediaId: string | undefined = undefined;
+    try {
+      const { hasConflicts } = await postFolderMediaDuplicatePreview(folder._id, {
+        kind: "final",
+        filenames: files.map((f) => f.name),
       });
+      if (hasConflicts) {
+        awaitingConflictChoice = true;
+        setDuplicateFilenamePrompt({ kind: "final", files, selectionMediaId });
+        return;
+      }
+
+      setUploadProgress({ kind: "final", computable: false, percent: 0 });
+      await uploadFolderFinalMedia(
+        folder._id,
+        files,
+        uploadProgressHandler("final"),
+        mergeFinalFormOpts(getDuplicateUploadPreference(), files, selectionMediaId),
+      );
+      await refreshFolder();
+      showToast(
+        delivery.clientHasPaidForFinals
+          ? `${files.length} final(s) uploaded.`
+          : `${files.length} final(s) uploaded. Outstanding balance noted — client may receive SMS.`,
+        "success",
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Upload failed.", "error");
+    } finally {
+      setUploadProgress(null);
+      if (!awaitingConflictChoice) {
+        setBusy(false);
+        pendingFinalDeliveryRef.current = null;
+      }
+    }
+  }
+
+  async function onUnlockFinalDelivery() {
+    if (!folder || unlockingFinals || busy) return;
+    setUnlockingFinals(true);
+    try {
+      const updated = await unlockFolderFinalDelivery(folder._id);
+      setFolder(updated);
+      showToast("Finals unlocked for client download.", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not unlock finals.", "error");
+    } finally {
+      setUnlockingFinals(false);
+    }
+  }
+
+  async function onRawUpload(files: File[]) {
+    if (!folder || busy || files.length === 0) return;
+    setBusy(true);
+    let awaitingConflictChoice = false;
+    try {
+      const { hasConflicts } = await postFolderMediaDuplicatePreview(folder._id, {
+        kind: "raw",
+        filenames: files.map((f) => f.name),
+      });
+      if (hasConflicts) {
+        awaitingConflictChoice = true;
+        setDuplicateFilenamePrompt({ kind: "raw", files });
+        return;
+      }
+
+      setUploadProgress({ kind: "raw", computable: false, percent: 0 });
+      await uploadFolderRawMedia(
+        folder._id,
+        files,
+        uploadProgressHandler("raw"),
+        rawUploadFormOptions(getDuplicateUploadPreference()),
+      );
       await refreshFolder();
       showToast(`${files.length} file(s) uploaded.`, "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Upload failed.", "error");
     } finally {
       setUploadProgress(null);
-      setBusy(false);
+      if (!awaitingConflictChoice) setBusy(false);
     }
   }
 
-  async function onFinalUpload(files: File[]) {
-    if (!folder || busy || files.length === 0) return;
+  async function onDuplicatePromptReplace() {
+    const p = duplicateFilenamePrompt;
+    if (!folder || !p) return;
+    setDuplicateFilenamePrompt(null);
     setBusy(true);
-    setUploadProgress({ kind: "final", computable: false, percent: 0 });
+    setUploadProgress({ kind: p.kind, computable: false, percent: 0 });
     try {
-      await uploadFolderFinalMedia(folder._id, files, undefined, (loaded, total, lengthComputable) => {
-        const computable = lengthComputable && total > 0;
-        setUploadProgress({
-          kind: "final",
-          computable,
-          percent: computable ? Math.min(100, Math.round((100 * loaded) / total)) : 0,
-        });
-      });
+      if (p.kind === "raw") {
+        await uploadFolderRawMedia(
+          folder._id,
+          p.files,
+          uploadProgressHandler("raw"),
+          rawUploadFormOptions("replace"),
+        );
+      } else {
+        await uploadFolderFinalMedia(
+          folder._id,
+          p.files,
+          uploadProgressHandler("final"),
+          mergeFinalFormOpts("replace", p.files, p.selectionMediaId),
+        );
+      }
       await refreshFolder();
-      showToast(`${files.length} final(s) uploaded.`, "success");
+      showToast(
+        p.kind === "raw"
+          ? `${p.files.length} file(s) uploaded (replacing matching names).`
+          : `${p.files.length} final(s) uploaded (replacing matching names).`,
+        "success",
+      );
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Upload failed.", "error");
     } finally {
       setUploadProgress(null);
       setBusy(false);
+      pendingFinalDeliveryRef.current = null;
+    }
+  }
+
+  async function onDuplicatePromptSkip() {
+    const p = duplicateFilenamePrompt;
+    if (!folder || !p) return;
+    setDuplicateFilenamePrompt(null);
+    setBusy(true);
+    setUploadProgress({ kind: p.kind, computable: false, percent: 0 });
+    try {
+      let ignored = 0;
+      if (p.kind === "raw") {
+        const result = await uploadFolderRawMedia(
+          folder._id,
+          p.files,
+          uploadProgressHandler("raw"),
+          rawUploadFormOptions("ignore"),
+        );
+        ignored = result?.ignoredDuplicatesCount ?? 0;
+      } else {
+        const result = await uploadFolderFinalMedia(
+          folder._id,
+          p.files,
+          uploadProgressHandler("final"),
+          mergeFinalFormOpts("ignore", p.files, p.selectionMediaId),
+        );
+        ignored = result?.ignoredDuplicatesCount ?? 0;
+      }
+      await refreshFolder();
+      showToast(
+        ignored > 0
+          ? p.kind === "raw"
+            ? `Uploaded; ${ignored} duplicate filename(s) skipped.`
+            : `Uploaded; ${ignored} duplicate final name(s) skipped.`
+          : p.kind === "raw"
+            ? `${p.files.length} file(s) uploaded.`
+            : `${p.files.length} final(s) uploaded.`,
+        "success",
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Upload failed.", "error");
+    } finally {
+      setUploadProgress(null);
+      setBusy(false);
+      pendingFinalDeliveryRef.current = null;
     }
   }
 
@@ -1211,6 +1425,23 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                   Upload finished edits for client delivery. Files are stored on the server.
                 </p>
+                {hasLockedFinals ? (
+                  <button
+                    type="button"
+                    onClick={() => void onUnlockFinalDelivery()}
+                    disabled={unlockingFinals || busy || mediaDeleteBlocked()}
+                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
+                  >
+                    {unlockingFinals ? (
+                      <InlineActionSkeleton />
+                    ) : (
+                      <>
+                        <Unlock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        Unlock client downloads
+                      </>
+                    )}
+                  </button>
+                ) : null}
               </div>
               {finalAssets.length > 0 ? (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
@@ -1263,7 +1494,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               label="Drop edited finals here"
               hint="JPG, PNG, WebP, GIF — uploaded to this gallery."
               disabled={busy}
-              onFiles={(files) => void onFinalUpload(files)}
+              onFiles={(files) => void openFinalUploadWizard(files)}
             />
             {finalAssets.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-200 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800">
@@ -1294,6 +1525,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         className="h-full w-full object-cover"
                         loading="lazy"
                       />
+                      {f.locked ? (
+                        <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                          <Lock className="h-3 w-3" aria-hidden />
+                          Locked
+                        </span>
+                      ) : null}
                     </div>
                     <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
                       <span
@@ -1324,6 +1561,150 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           </div>
         ) : null}
       </div>
+
+      {finalWizardOpen ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="final-wizard-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
+            <h2
+              id="final-wizard-title"
+              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              Final delivery
+            </h2>
+            {finalWizardStep === "choose" ? (
+              <>
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  Has the client paid for these finals?
+                </p>
+                <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                  <button
+                    type="button"
+                    className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    onClick={() => setFinalWizardOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    onClick={() => setFinalWizardStep("unpaid")}
+                  >
+                    Not yet
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+                    onClick={() => {
+                      setFinalWizardOpen(false);
+                      void executeFinalUploadPipeline(finalWizardFiles, {
+                        clientHasPaidForFinals: true,
+                      });
+                    }}
+                  >
+                    Yes — upload
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  Enter what they still owe. Lock previews until paid.
+                </p>
+                <label className="mt-4 block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Amount remaining
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={finalWizardBalance}
+                    onChange={(e) => setFinalWizardBalance(e.target.value)}
+                    placeholder="e.g. 500"
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand/25 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                </label>
+                <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={finalWizardLock}
+                    onChange={(e) => setFinalWizardLock(e.target.checked)}
+                    className="rounded border-zinc-300 text-brand focus:ring-brand dark:border-zinc-600"
+                  />
+                  Lock images before upload
+                </label>
+                <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    onClick={() => setFinalWizardStep("choose")}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+                    onClick={() => {
+                      const raw = finalWizardBalance.trim().replace(/,/g, "");
+                      if (!raw || Number.isNaN(Number(raw))) {
+                        showToast("Enter a valid outstanding amount.", "error");
+                        return;
+                      }
+                      setFinalWizardOpen(false);
+                      void executeFinalUploadPipeline(finalWizardFiles, {
+                        clientHasPaidForFinals: false,
+                        amountRemainingGHS: raw,
+                        lockImagesBeforeUpload: finalWizardLock,
+                      });
+                    }}
+                  >
+                    Upload
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {duplicateFilenamePrompt ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="duplicate-filename-dialog-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
+            <h2
+              id="duplicate-filename-dialog-title"
+              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              Filename conflict
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Duplicate filenames. Replace or skip?
+            </p>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => void onDuplicatePromptSkip()}
+                className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                Skip
+              </button>
+              <button
+                type="button"
+                onClick={() => void onDuplicatePromptReplace()}
+                className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+              >
+                Replace
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

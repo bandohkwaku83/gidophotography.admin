@@ -5,6 +5,7 @@ import Image from "next/image";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
 import {
   getShareFinalDownloadUrl,
+  getShareFinalLockedPreviewUrl,
   getShareGallery,
   type NormalizedShareGallery,
   ShareGalleryError,
@@ -13,6 +14,7 @@ import {
   type ShareGalleryAsset,
 } from "@/lib/share-gallery-api";
 import { useToast } from "@/components/toast-provider";
+import { cn } from "@/lib/utils";
 import { folderCoverObjectPositionStyle, type ApiFolder } from "@/lib/folders-api";
 import {
   CalendarDays,
@@ -23,6 +25,7 @@ import {
   GalleryHorizontal,
   Heart,
   LayoutGrid,
+  Lock,
   PanelsTopLeft,
   Send,
 } from "lucide-react";
@@ -204,6 +207,12 @@ export function ClientGalleryApp({ token }: { token: string }) {
   }, [token, gridLayout]);
 
   useEffect(() => {
+    if (gallery?.finalDelivery === false && photoTab === "edited") {
+      setPhotoTab("all");
+    }
+  }, [gallery?.finalDelivery, photoTab]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoadState("loading");
     setLoadError(null);
@@ -238,6 +247,8 @@ export function ClientGalleryApp({ token }: { token: string }) {
     if (!gallery) return true;
     return !gallery.canEditSelections || gallery.selectionLocked;
   }, [gallery]);
+
+  const showFinalsTab = gallery ? gallery.finalDelivery !== false : true;
 
   const selectedCount = assets.filter((a) => a.selection === "SELECTED").length;
   const editedCount = gallery?.finals.length ?? 0;
@@ -391,7 +402,13 @@ export function ClientGalleryApp({ token }: { token: string }) {
   }
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <div
+      className={cn(
+        "min-h-screen overflow-x-hidden bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50",
+        gallery?.rightsProtection &&
+          "select-none [-webkit-touch-callout:none] [user-select:none]",
+      )}
+    >
       <header className="relative">
         {gallery.coverImageUrl ? (
           <section
@@ -559,7 +576,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 [
                   ["all", "All Photos"],
                   ["selected", "Selected Photos"],
-                  ["edited", "Edited Photos"],
+                  ...(showFinalsTab ? ([["edited", "Edited Photos"]] as const) : []),
                 ] as const
               ).map(([key, label]) => {
                 const count =
@@ -739,30 +756,58 @@ export function ClientGalleryApp({ token }: { token: string }) {
             </p>
           ) : (
             <ul className={galleryListClass(gridLayout)}>
-              {gallery.finals.map((f, index) => (
-                <li key={f.id} className={`flex flex-col ${editedCardClass(gridLayout, index)}`}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={f.url}
-                    alt={f.name}
-                    className={editedImageClass(gridLayout, index)}
-                  />
-                  <div className="flex flex-1 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">
-                      {f.name}
-                    </span>
-                    <a
-                      href={getShareFinalDownloadUrl(token, f.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    >
-                      <Download className="h-3.5 w-3.5" aria-hidden />
-                      Download
-                    </a>
-                  </div>
-                </li>
-              ))}
+              {gallery.finals.map((f, index) => {
+                const locked = Boolean(f.locked);
+                const imgSrc = locked
+                  ? f.lockedPreviewUrl || getShareFinalLockedPreviewUrl(token, f.id)
+                  : f.url;
+                return (
+                  <li key={f.id} className={`flex flex-col ${editedCardClass(gridLayout, index)}`}>
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imgSrc}
+                        alt={f.name}
+                        className={cn(
+                          editedImageClass(gridLayout, index),
+                          locked && "select-none",
+                        )}
+                        draggable={!locked}
+                        onContextMenu={(e) => {
+                          if (locked) e.preventDefault();
+                        }}
+                      />
+                      {locked ? (
+                        <div
+                          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/25 to-transparent"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </div>
+                    <div className="flex flex-1 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                        {f.name}
+                      </span>
+                      {locked ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+                          <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          Locked
+                        </span>
+                      ) : (
+                        <a
+                          href={getShareFinalDownloadUrl(token, f.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
+                        >
+                          <Download className="h-3.5 w-3.5" aria-hidden />
+                          Download
+                        </a>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )
         ) : visibleAssets.length === 0 ? (

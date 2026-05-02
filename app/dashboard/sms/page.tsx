@@ -46,7 +46,7 @@ type OutgoingLogRow = {
 };
 
 /** Composer “single block” size for counts and UI (not carrier segment billing). */
-const SMS_COMPOSER_CHAR_UNIT = 300;
+const SMS_COMPOSER_CHAR_UNIT = 500;
 
 function smsSegments(charCount: number): number {
   if (charCount <= 0) return 0;

@@ -11,7 +11,12 @@ export type ShareGalleryAsset = {
 export type ShareGalleryFinal = {
   id: string;
   name: string;
+  /** Full-resolution URL when unlocked; may still be present when locked for admin-style APIs. */
   url: string;
+  /** When true, client should use locked preview only and cannot download full files until unlocked. */
+  locked?: boolean;
+  /** Optional explicit preview URL for locked state (watermarked / reduced). */
+  lockedPreviewUrl?: string;
 };
 
 export type NormalizedShareGallery = {
@@ -31,6 +36,10 @@ export type NormalizedShareGallery = {
   canEditSelections: boolean;
   /** Photographer lock only; never set by client submit. */
   selectionLocked: boolean;
+  /** When false, hide final delivery tab until photographer enables it. */
+  finalDelivery?: boolean;
+  /** Hint for client UI to apply screenshot/download discouragement. */
+  rightsProtection?: boolean;
   assets: ShareGalleryAsset[];
   finals: ShareGalleryFinal[];
   counts?: { uploads: number; selected: number; finals: number };
@@ -134,9 +143,31 @@ function finalFromRow(item: unknown, idx: number): ShareGalleryFinal | null {
     str(o.originalName) ||
     `Final ${idx + 1}`;
   const urlRaw = str(o.url) || str(o.downloadUrl) || str(o.fileUrl);
+  const lockedPreviewRaw =
+    str(o.lockedPreviewUrl) ||
+    str(o.locked_preview_url) ||
+    str(o.previewUrlWhenLocked) ||
+    str(o.lockedPreview);
+
+  const locked =
+    bool(o.locked) ||
+    bool(o.isLocked) ||
+    str(o.lockStatus).toLowerCase() === "locked";
+
   const url = resolvePublicGalleryImageUrl(urlRaw);
-  if (!url) return null;
-  return { id, name, url };
+  const lockedPreviewUrl = lockedPreviewRaw
+    ? resolvePublicGalleryImageUrl(lockedPreviewRaw)
+    : "";
+
+  if (!url && !lockedPreviewUrl) return null;
+
+  return {
+    id,
+    name,
+    url: url || lockedPreviewUrl,
+    locked,
+    lockedPreviewUrl: lockedPreviewUrl || undefined,
+  };
 }
 
 /**
@@ -315,6 +346,30 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
       : (root as Record<string, unknown>);
   const focal = parseFolderCoverFocal(focalPayload);
 
+  const folderPayload = folder ?? (root as Raw);
+
+  const finalDelivery =
+    typeof folderPayload.finalDelivery === "boolean"
+      ? folderPayload.finalDelivery
+      : typeof root.finalDelivery === "boolean"
+        ? root.finalDelivery
+        : typeof (folderPayload as Raw).final_delivery === "boolean"
+          ? ((folderPayload as Raw).final_delivery as boolean)
+          : typeof (root as Raw).final_delivery === "boolean"
+            ? ((root as Raw).final_delivery as boolean)
+            : undefined;
+
+  const rightsProtection =
+    typeof folderPayload.rightsProtection === "boolean"
+      ? folderPayload.rightsProtection
+      : typeof root.rightsProtection === "boolean"
+        ? root.rightsProtection
+        : typeof (folderPayload as Raw).rights_protection === "boolean"
+          ? ((folderPayload as Raw).rights_protection as boolean)
+          : typeof (root as Raw).rights_protection === "boolean"
+            ? ((root as Raw).rights_protection as boolean)
+            : undefined;
+
   return {
     folderId,
     clientName,
@@ -327,6 +382,8 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     selectionSubmitted,
     canEditSelections,
     selectionLocked,
+    finalDelivery,
+    rightsProtection,
     assets,
     finals,
     counts,
@@ -473,5 +530,12 @@ export async function submitShareGallerySelectionsToPhotographer(
 export function getShareFinalDownloadUrl(shareToken: string, finalId: string): string {
   return apiUrl(
     `/api/share/${encodeURIComponent(shareToken)}/finals/${encodeURIComponent(finalId)}/download`,
+  );
+}
+
+/** Locked-state preview image (watermarked / limited). Use as `<img src>` when `final.locked`. */
+export function getShareFinalLockedPreviewUrl(shareToken: string, finalId: string): string {
+  return apiUrl(
+    `/api/share/${encodeURIComponent(shareToken)}/finals/${encodeURIComponent(finalId)}/locked-preview`,
   );
 }

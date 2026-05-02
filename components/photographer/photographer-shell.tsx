@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import {
   Bell,
+  CalendarDays,
   GalleryHorizontal,
   HardDrive,
   LayoutGrid,
@@ -50,6 +51,12 @@ const WORKSPACE_NAV: ShellNavItem[] = [
     label: "Clients",
     icon: Users,
     isActive: (p) => p.startsWith("/dashboard/clients"),
+  },
+  {
+    href: "/dashboard/schedules",
+    label: "Schedules",
+    icon: CalendarDays,
+    isActive: (p) => p.startsWith("/dashboard/schedules"),
   },
   {
     href: "/dashboard/galleries",

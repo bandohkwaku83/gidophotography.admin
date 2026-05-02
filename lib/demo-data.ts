@@ -17,6 +17,8 @@ export type DemoFinalAsset = {
   id: string;
   name: string;
   url: string;
+  /** Payment lock — client share hides full-res download until unlock. */
+  locked?: boolean;
 };
 
 export type DemoProject = {

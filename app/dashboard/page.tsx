@@ -90,6 +90,12 @@ const QUICK_LINKS: QuickItem[] = [
     icon: Users,
   },
   {
+    href: "/dashboard/schedules",
+    label: "Schedules",
+    sub: "Booked shoots",
+    icon: Calendar,
+  },
+  {
     href: "/dashboard/sms",
     label: "SMS",
     sub: "Texts to clients & contacts",

@@ -2,6 +2,9 @@ import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 import { clearAuth, getAuthToken } from "@/lib/auth-demo";
 import type { ApiClient } from "@/lib/clients-api";
 import type { DemoAsset, DemoFinalAsset, FolderStatus } from "@/lib/demo-data";
+import type { DuplicateUploadAction } from "@/lib/upload-preferences";
+
+export type { DuplicateUploadAction } from "@/lib/upload-preferences";
 
 export type ApiFolderShare = {
   enabled?: boolean;
@@ -27,6 +30,8 @@ export type ApiFolderMedia = {
   /** Common on GET folder `uploads` / upload responses */
   originalFilename?: string;
   name?: string;
+  /** Whether this final is payment-locked for the client share (downloads disabled until unlock). */
+  locked?: boolean;
   /** Primary file URL (often original / full-quality for admin views). */
   url?: string;
   /** When present, preferred URL for UI (e.g. watermarked preview when watermarking is enabled). */
@@ -78,6 +83,10 @@ export type ApiFolder = {
   rawMedia?: ApiFolderMedia[];
   selectionMedia?: ApiFolderMedia[];
   finalMedia?: ApiFolderMedia[];
+  /** When false, client gallery may hide final delivery UI until backend enables it. */
+  finalDelivery?: boolean;
+  /** Extra protection hints for client gallery (e.g. discourage saving screenshots). */
+  rightsProtection?: boolean;
   /** Nested bucket some APIs use */
   media?: {
     raw?: ApiFolderMedia[];
@@ -502,6 +511,89 @@ export async function patchFolderShare(
   return unwrapFolder(body);
 }
 
+/** Optional FormData fields for folder raw/final uploads (`duplicateAction`, `uploadComplete`). */
+export type UploadFolderMediaFormOptions = {
+  duplicateAction?: DuplicateUploadAction;
+  /** Append `uploadComplete=true` on the last file only (e.g. SMS / batch hooks). */
+  markUploadComplete?: boolean;
+};
+
+/** Multipart fields for final delivery payment / lock (sent with each final file in the batch). */
+export type FinalDeliveryUploadFields = {
+  /** When true, omit balance and lock fields. When false, send amount and lock preference. */
+  clientHasPaidForFinals: boolean;
+  /** Amount still owed in GHS — required when clientHasPaidForFinals is false (API field name). */
+  amountRemainingGHS?: string;
+  /** When unpaid: lock previews until payment (backend + SMS flow). */
+  lockImagesBeforeUpload?: boolean;
+};
+
+export type UploadFolderFinalMediaFormOptions = UploadFolderMediaFormOptions &
+  Partial<FinalDeliveryUploadFields> & {
+    /** Required when uploading exactly one final linked to a selection row (existing backend behavior). */
+    selectionMediaId?: string;
+  };
+
+export type UploadFolderMediaResult = {
+  lastBody: unknown;
+  /** Sum of `ignoredDuplicatesCount` / `ignored_duplicates_count` from each response in the sequence. */
+  ignoredDuplicatesCount: number;
+};
+
+/** Extract duplicate-skip count from a single upload JSON response. */
+export function readIgnoredDuplicatesCount(body: unknown): number {
+  if (!body || typeof body !== "object") return 0;
+  const o = body as Record<string, unknown>;
+  const nested =
+    o.data && typeof o.data === "object" ? (o.data as Record<string, unknown>) : null;
+  const pick = (x: Record<string, unknown>) =>
+    x.ignoredDuplicatesCount ?? x.ignored_duplicates_count;
+  const raw = pick(o) ?? (nested ? pick(nested) : undefined);
+  return typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+}
+
+export type FolderMediaDuplicatePreviewKind = "raw" | "final";
+
+function readHasConflicts(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const o = body as Record<string, unknown>;
+  const nested =
+    o.data && typeof o.data === "object" ? (o.data as Record<string, unknown>) : null;
+  const pick = (x: Record<string, unknown>) => x.hasConflicts ?? x.has_conflicts;
+  const raw = pick(o) ?? (nested ? pick(nested) : undefined);
+  return raw === true || raw === "true";
+}
+
+/**
+ * Check whether any of the given filenames already exist for this folder before uploading bytes.
+ * POST body: `{ kind, filenames }` (names only).
+ */
+export async function postFolderMediaDuplicatePreview(
+  folderId: string,
+  input: { kind: FolderMediaDuplicatePreviewKind; filenames: string[] },
+): Promise<{ hasConflicts: boolean }> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/media/duplicate-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: input.kind,
+        filenames: input.filenames,
+      }),
+    },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Duplicate preview failed (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  return { hasConflicts: readHasConflicts(body) };
+}
+
 export async function regenerateFolderShare(
   folderId: string,
   input: { clearSlug?: boolean; linkExpiry?: string },
@@ -526,6 +618,35 @@ export async function regenerateFolderShare(
   return unwrapFolder(body);
 }
 
+function appendFolderUploadFormFields(
+  fd: FormData,
+  opts: UploadFolderMediaFormOptions | undefined,
+  fileIndex: number,
+  fileCount: number,
+): void {
+  if (opts?.duplicateAction) {
+    fd.append("duplicateAction", opts.duplicateAction);
+  }
+  if (opts?.markUploadComplete && fileIndex === fileCount - 1) {
+    fd.append("uploadComplete", "true");
+  }
+}
+
+/** Final-delivery payment fields (same on every file in the batch). */
+function appendFinalDeliveryMultipartFields(
+  fd: FormData,
+  opts: UploadFolderFinalMediaFormOptions | undefined,
+): void {
+  if (!opts || opts.clientHasPaidForFinals === undefined) return;
+  fd.append("clientHasPaidForFinals", opts.clientHasPaidForFinals ? "true" : "false");
+  if (opts.clientHasPaidForFinals === false) {
+    if (opts.amountRemainingGHS != null && String(opts.amountRemainingGHS).trim() !== "") {
+      fd.append("amountRemainingGHS", String(opts.amountRemainingGHS).trim());
+    }
+    fd.append("lockImagesBeforeUpload", opts.lockImagesBeforeUpload === true ? "true" : "false");
+  }
+}
+
 /**
  * Upload one file per request. A single huge multipart POST often fails when the browser
  * talks to Next.js (`/api` rewrite) instead of the API host directly—Postman hits :8000 and
@@ -535,7 +656,8 @@ export async function uploadFolderRawMedia(
   folderId: string,
   files: File[],
   onProgress?: (loaded: number, total: number, lengthComputable: boolean) => void,
-): Promise<unknown> {
+  formOptions?: UploadFolderMediaFormOptions,
+): Promise<UploadFolderMediaResult | null> {
   if (files.length === 0) {
     return null;
   }
@@ -543,25 +665,35 @@ export async function uploadFolderRawMedia(
   const totalBytes = Math.max(1, files.reduce((sum, f) => sum + f.size, 0));
   let bytesDone = 0;
   let lastBody: unknown;
-  for (const file of files) {
+  let ignoredDuplicatesCount = 0;
+  const n = files.length;
+  for (let i = 0; i < n; i++) {
+    const file = files[i];
     const fd = new FormData();
     fd.append("files", file);
+    appendFolderUploadFormFields(fd, formOptions, i, n);
     lastBody = await authedFormDataPostWithProgress(path, fd, (loaded) => {
       onProgress?.(bytesDone + loaded, totalBytes, true);
     });
+    ignoredDuplicatesCount += readIgnoredDuplicatesCount(lastBody);
     bytesDone += file.size;
     onProgress?.(bytesDone, totalBytes, true);
   }
-  console.log("[folders:media:raw] response", { ok: true, fileCount: files.length, body: lastBody });
-  return lastBody;
+  console.log("[folders:media:raw] response", {
+    ok: true,
+    fileCount: files.length,
+    ignoredDuplicatesCount,
+    body: lastBody,
+  });
+  return { lastBody, ignoredDuplicatesCount };
 }
 
 export async function uploadFolderFinalMedia(
   folderId: string,
   files: File[],
-  selectionMediaId?: string,
   onProgress?: (loaded: number, total: number, lengthComputable: boolean) => void,
-): Promise<unknown> {
+  formOptions?: UploadFolderFinalMediaFormOptions,
+): Promise<UploadFolderMediaResult | null> {
   if (files.length === 0) {
     return null;
   }
@@ -569,20 +701,50 @@ export async function uploadFolderFinalMedia(
   const totalBytes = Math.max(1, files.reduce((sum, f) => sum + f.size, 0));
   let bytesDone = 0;
   let lastBody: unknown;
-  for (const file of files) {
+  let ignoredDuplicatesCount = 0;
+  const n = files.length;
+  const selectionMediaId = formOptions?.selectionMediaId;
+  for (let i = 0; i < n; i++) {
+    const file = files[i];
     const fd = new FormData();
     fd.append("files", file);
     if (selectionMediaId !== undefined && selectionMediaId !== "") {
       fd.append("selectionMediaId", selectionMediaId);
     }
+    appendFinalDeliveryMultipartFields(fd, formOptions);
+    appendFolderUploadFormFields(fd, formOptions, i, n);
     lastBody = await authedFormDataPostWithProgress(path, fd, (loaded) => {
       onProgress?.(bytesDone + loaded, totalBytes, true);
     });
+    ignoredDuplicatesCount += readIgnoredDuplicatesCount(lastBody);
     bytesDone += file.size;
     onProgress?.(bytesDone, totalBytes, true);
   }
-  console.log("[folders:media:final] response", { ok: true, fileCount: files.length, body: lastBody });
-  return lastBody;
+  console.log("[folders:media:final] response", {
+    ok: true,
+    fileCount: files.length,
+    ignoredDuplicatesCount,
+    body: lastBody,
+  });
+  return { lastBody, ignoredDuplicatesCount };
+}
+
+/** Admin: unlock client final delivery after payment confirmed (`PATCH …/final-delivery/unlock`). */
+export async function unlockFolderFinalDelivery(folderId: string): Promise<ApiFolder> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/final-delivery/unlock`,
+    { method: "PATCH" },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:final-delivery:unlock]", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Could not unlock final delivery (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  return unwrapFolder(body);
 }
 
 export async function deleteFolderRawMedia(folderId: string, mediaId: string): Promise<void> {
@@ -797,7 +959,11 @@ export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
   const name = m.originalName || m.originalFilename || m.filename || m.name || "Final";
   const urlRaw = m.url || m.previewUrl || m.thumbUrl || "";
   const url = resolveCoverUrl(urlRaw) || urlRaw || "";
-  return { id, name, url };
+  const locked =
+    m.locked === true ||
+    (m as Record<string, unknown>).isLocked === true ||
+    (m as Record<string, unknown>).lockImages === true;
+  return { id, name, url, locked };
 }
 
 export function apiFolderStatusToUi(s?: string): FolderStatus {
