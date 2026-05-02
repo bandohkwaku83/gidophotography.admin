@@ -1,4 +1,5 @@
 import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
+import { parseFolderCoverFocal } from "@/lib/folders-api";
 
 export type ShareGalleryAsset = {
   id: string;
@@ -21,8 +22,14 @@ export type NormalizedShareGallery = {
   description?: string;
   /** Resolved absolute URL for folder cover when API provides coverImage / coverImageUrl. */
   coverImageUrl?: string;
+  /** Cover focal for `object-position` (0–100), from folder when API provides it. */
+  coverFocalX?: number;
+  coverFocalY?: number;
+  /** At least one successful submit; backend refreshes `share.selectionSubmittedAt` each time. Does not block editing. */
   selectionSubmitted: boolean;
+  /** Editable unless photographer-locked; mirrors GET `canEditSelections` (`!share.selectionLocked`). */
   canEditSelections: boolean;
+  /** Photographer lock only; never set by client submit. */
   selectionLocked: boolean;
   assets: ShareGalleryAsset[];
   finals: ShareGalleryFinal[];
@@ -226,17 +233,27 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
 
   const eventName = str(folder?.eventName) || str(root.eventName) || undefined;
 
+  const selectionLocked = bool(share?.selectionLocked);
+
+  /** True once the client has submitted at least once (timestamp or explicit flags). Never implies read-only; editing follows {@link canEditSelections}. */
   const selectionSubmitted =
     (share != null && str(share.selectionSubmittedAt).length > 0) ||
+    bool(share?.selectionSubmitted) ||
     bool(root.selectionSubmitted) ||
     bool(folder?.selectionSubmitted) ||
     str(root.selectionStatus).toLowerCase() === "submitted" ||
     str(folder?.selectionStatus).toLowerCase() === "submitted";
 
+  /**
+   * Editable unless photographer-locked. GET /api/share/:id should send this as `!share.selectionLocked`;
+   * we fall back to that if the boolean is omitted.
+   */
   const canEditSelections =
-    typeof folder?.canEditSelections === "boolean" ? folder.canEditSelections : true;
-
-  const selectionLocked = bool(share?.selectionLocked);
+    typeof root.canEditSelections === "boolean"
+      ? root.canEditSelections
+      : typeof folder?.canEditSelections === "boolean"
+        ? folder.canEditSelections
+        : !selectionLocked;
 
   const assets: ShareGalleryAsset[] = [];
   for (let i = 0; i < assetsRaw.length; i++) {
@@ -291,6 +308,11 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
       : "");
   const coverImageUrl = coverRaw ? resolvePublicGalleryImageUrl(coverRaw) : undefined;
 
+  const focal =
+    folder && typeof folder === "object"
+      ? parseFolderCoverFocal(folder as Record<string, unknown>)
+      : { x: 50, y: 50 };
+
   return {
     folderId,
     clientName,
@@ -298,6 +320,8 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     eventDate: str(folder?.eventDate) || str(root.eventDate) || undefined,
     description: str(folder?.description) || str(root.description) || undefined,
     coverImageUrl,
+    coverFocalX: focal.x,
+    coverFocalY: focal.y,
     selectionSubmitted,
     canEditSelections,
     selectionLocked,

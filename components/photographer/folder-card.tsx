@@ -6,6 +6,7 @@ import {
   apiFolderStatusToUi,
   getFolderClientName,
   getFolderCoverUrl,
+  folderCoverObjectPositionStyle,
   type ApiFolder,
 } from "@/lib/folders-api";
 import { cn } from "@/lib/utils";
@@ -78,6 +79,7 @@ export function FolderCard({
             src={cover}
             alt=""
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+            style={folderCoverObjectPositionStyle(folder)}
           />
         </Link>
 

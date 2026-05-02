@@ -39,6 +39,7 @@ import {
   getFolder,
   getFolderClientName,
   getFolderCoverUrl,
+  folderCoverObjectPositionStyle,
   FALLBACK_SHARE_EXPIRY_PRESETS,
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
@@ -655,6 +656,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           src={coverSrc}
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
+          style={folderCoverObjectPositionStyle(folder)}
         />
         <div
           className="absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/45 to-zinc-900/20"

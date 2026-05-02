@@ -57,6 +57,9 @@ export type ApiFolder = {
   coverImage?: string;
   /** Fully-qualified URL when available (preferred for rendering). */
   coverImageUrl?: string;
+  /** Focal point for `object-position` on cover (0–100). Omitted = centered. */
+  coverFocalX?: number;
+  coverFocalY?: number;
   usingDefaultCover?: boolean;
   share?: ApiFolderShare;
   /** Fully-qualified shareable URL (e.g. https://example.com/share/<code>). */
@@ -102,6 +105,9 @@ export type CreateFolderInput = {
   linkExpiry: string;
   coverImage?: File | null;
   useDefaultCover?: boolean;
+  /** 0–100; used with custom cover for client `object-position`. */
+  coverFocalX?: number;
+  coverFocalY?: number;
 };
 
 export type UpdateFolderInput = {
@@ -110,6 +116,8 @@ export type UpdateFolderInput = {
   description?: string;
   coverImage?: File | null;
   useDefaultCover?: boolean;
+  coverFocalX?: number;
+  coverFocalY?: number;
 };
 
 export class FoldersApiError extends Error {
@@ -285,6 +293,8 @@ export async function createFolder(input: CreateFolderInput): Promise<ApiFolder>
 
   let res: Response;
   if (input.coverImage) {
+    const fx = input.coverFocalX ?? 50;
+    const fy = input.coverFocalY ?? 50;
     const fd = buildFormData(
       {
         client: input.clientId,
@@ -293,6 +303,8 @@ export async function createFolder(input: CreateFolderInput): Promise<ApiFolder>
         description: input.description,
         linkExpiry: input.linkExpiry,
         useDefaultCover: useDefault ? "true" : undefined,
+        coverFocalX: String(fx),
+        coverFocalY: String(fy),
       },
       input.coverImage,
     );
@@ -331,6 +343,11 @@ export async function updateFolder(
   id: string,
   input: UpdateFolderInput,
 ): Promise<ApiFolder> {
+  const focalFields: Record<string, string> = {};
+  if (input.coverFocalX !== undefined) {
+    focalFields.coverFocalX = String(input.coverFocalX);
+    focalFields.coverFocalY = String(input.coverFocalY ?? 50);
+  }
   const fd = buildFormData(
     {
       eventName: input.eventName,
@@ -338,6 +355,7 @@ export async function updateFolder(
       description: input.description,
       useDefaultCover:
         input.useDefaultCover === undefined ? undefined : input.useDefaultCover ? "true" : "false",
+      ...focalFields,
     },
     input.coverImage,
   );
@@ -831,6 +849,39 @@ export function resolveCoverUrl(coverImage?: string | null): string | null {
 export function getFolderCoverUrl(folder: ApiFolder): string | null {
   if (folder.coverImageUrl) return resolveCoverUrl(folder.coverImageUrl);
   return resolveCoverUrl(folder.coverImage);
+}
+
+function readNumericField(o: Record<string, unknown>, camel: string, snake: string): number | null {
+  const tryOne = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+  return tryOne(o[camel]) ?? tryOne(o[snake]);
+}
+
+/** Read cover focal from API folder (camelCase or snake_case). Default center 50,50. */
+export function parseFolderCoverFocal(
+  source: ApiFolder | Record<string, unknown> | null | undefined,
+): { x: number; y: number } {
+  if (!source || typeof source !== "object") return { x: 50, y: 50 };
+  const o = source as Record<string, unknown>;
+  const x = readNumericField(o, "coverFocalX", "cover_focal_x");
+  const y = readNumericField(o, "coverFocalY", "cover_focal_y");
+  const clamp = (n: number) => Math.min(100, Math.max(0, n));
+  return {
+    x: x == null ? 50 : clamp(x),
+    y: y == null ? 50 : clamp(y),
+  };
+}
+
+/** CSS `object-position` for folder cover thumbnails / hero. */
+export function folderCoverObjectPositionStyle(folder: ApiFolder): { objectPosition: string } {
+  const { x, y } = parseFolderCoverFocal(folder);
+  return { objectPosition: `${x}% ${y}%` };
 }
 
 function pathFromShareUrlField(shareUrl: string): string | null {

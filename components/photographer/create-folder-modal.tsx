@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
 import {
   AlignLeft,
   CalendarDays,
@@ -18,6 +19,7 @@ import {
   getFolderClientId,
   getFolderCoverUrl,
   getShareLinkExpiryPresets,
+  parseFolderCoverFocal,
   updateFolder,
   type ApiFolder,
   type ShareLinkExpiryPreset,
@@ -51,6 +53,8 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     FALLBACK_SHARE_EXPIRY_PRESETS,
   );
   const [busy, setBusy] = useState(false);
+  const [coverFocalX, setCoverFocalX] = useState(50);
+  const [coverFocalY, setCoverFocalY] = useState(50);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -62,6 +66,9 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     setCoverFile(null);
     setCoverPreview(folder ? getFolderCoverUrl(folder) : null);
     setUseDefaultCover(folder ? folder.usingDefaultCover !== false : true);
+    const focal = folder ? parseFolderCoverFocal(folder) : { x: 50, y: 50 };
+    setCoverFocalX(focal.x);
+    setCoverFocalY(focal.y);
     setLinkExpiry("30d");
     setBusy(false);
   }, [open, folder]);
@@ -122,6 +129,15 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     [clients],
   );
 
+  const showCoverFocalPicker = useMemo(
+    () =>
+      Boolean(
+        coverPreview &&
+          (coverFile || (isEdit && folder != null && folder.usingDefaultCover === false)),
+      ),
+    [coverPreview, coverFile, isEdit, folder],
+  );
+
   if (!open) return null;
 
   function handleClose() {
@@ -141,7 +157,11 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
       return;
     }
     setCoverFile(file);
-    if (file) setUseDefaultCover(false);
+    if (file) {
+      setUseDefaultCover(false);
+      setCoverFocalX(50);
+      setCoverFocalY(50);
+    }
     e.currentTarget.value = "";
   }
 
@@ -149,6 +169,8 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     setCoverFile(null);
     setCoverPreview(null);
     setUseDefaultCover(true);
+    setCoverFocalX(50);
+    setCoverFocalY(50);
   }
 
   async function submit() {
@@ -172,6 +194,9 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
 
     setBusy(true);
     try {
+      const shouldSendFocal = Boolean(coverFile) || (!useDefaultCover && Boolean(coverPreview));
+      const focalFields = shouldSendFocal ? { coverFocalX, coverFocalY } : {};
+
       const saved = isEdit
         ? await updateFolder(folder!._id, {
             eventName: trimmedEventName,
@@ -179,6 +204,7 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
             description: trimmedDescription,
             coverImage: coverFile ?? null,
             useDefaultCover: coverFile ? false : useDefaultCover,
+            ...focalFields,
           })
         : await createFolder({
             clientId,
@@ -188,6 +214,7 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
             linkExpiry,
             coverImage: coverFile ?? null,
             useDefaultCover,
+            ...focalFields,
           });
 
       showToast(isEdit ? "Folder updated." : "Folder created.", "success");
@@ -339,30 +366,54 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
               Cover
             </p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-              <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-zinc-100 to-zinc-50 shadow-inner dark:border-zinc-700 dark:from-zinc-900 dark:to-zinc-950 sm:h-36 sm:w-44 sm:shrink-0">
-                {coverPreview ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={coverPreview} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full min-h-[120px] flex-col items-center justify-center gap-1 px-3 text-center sm:min-h-0">
-                    <ImagePlus className="h-8 w-8 text-zinc-300 dark:text-zinc-600" aria-hidden />
-                    <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                      {useDefaultCover ? "Studio default" : "No image"}
-                    </span>
-                  </div>
-                )}
-                {coverPreview ? (
-                  <button
-                    type="button"
-                    onClick={clearCover}
-                    disabled={busy}
-                    className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-white shadow-md backdrop-blur-sm transition hover:bg-black/80"
-                    aria-label="Remove cover"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                ) : null}
-              </div>
+              {showCoverFocalPicker && coverPreview ? (
+                <CoverFocalPreview
+                  imageUrl={coverPreview}
+                  focalX={coverFocalX}
+                  focalY={coverFocalY}
+                  onFocalChange={(x, y) => {
+                    setCoverFocalX(x);
+                    setCoverFocalY(y);
+                  }}
+                  disabled={busy}
+                  topRight={
+                    <button
+                      type="button"
+                      onClick={clearCover}
+                      disabled={busy}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-white shadow-md backdrop-blur-sm transition hover:bg-black/80"
+                      aria-label="Remove cover"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  }
+                />
+              ) : (
+                <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-zinc-100 to-zinc-50 shadow-inner dark:border-zinc-700 dark:from-zinc-900 dark:to-zinc-950 sm:h-36 sm:w-44 sm:shrink-0">
+                  {coverPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={coverPreview} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full min-h-[120px] flex-col items-center justify-center gap-1 px-3 text-center sm:min-h-0">
+                      <ImagePlus className="h-8 w-8 text-zinc-300 dark:text-zinc-600" aria-hidden />
+                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                        {useDefaultCover ? "Studio default" : "No image"}
+                      </span>
+                    </div>
+                  )}
+                  {coverPreview ? (
+                    <button
+                      type="button"
+                      onClick={clearCover}
+                      disabled={busy}
+                      className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-white shadow-md backdrop-blur-sm transition hover:bg-black/80"
+                      aria-label="Remove cover"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+              )}
 
               <div className="flex min-w-0 flex-1 flex-col gap-3">
                 <button
@@ -384,6 +435,8 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
                       if (e.target.checked) {
                         setCoverFile(null);
                         setCoverPreview(null);
+                        setCoverFocalX(50);
+                        setCoverFocalY(50);
                       }
                     }}
                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 text-brand focus:ring-brand"
