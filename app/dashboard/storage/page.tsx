@@ -286,9 +286,6 @@ export default function StoragePage() {
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                 Per-gallery usage
               </h2>
-              <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-                Sorted by total size via the API; name sorting is applied in the browser.
-              </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

@@ -16,8 +16,8 @@ import { getAuth, logout } from "@/lib/auth-demo";
 import { STUDIO_NAME } from "@/lib/branding";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
+import { NotificationsBell } from "@/components/photographer/notifications-bell";
 import {
-  Bell,
   CalendarDays,
   GalleryHorizontal,
   HardDrive,
@@ -356,14 +356,7 @@ export function PhotographerShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Link
-                href="/dashboard/sms"
-                className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                aria-label="SMS inbox and notifications"
-              >
-                <Bell className="h-4 w-4" aria-hidden="true" />
-                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />
-              </Link>
+              <NotificationsBell />
 
               <div ref={profileWrapRef} className="relative">
                 <button

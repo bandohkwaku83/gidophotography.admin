@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
 import {
@@ -28,10 +28,13 @@ import {
   Lock,
   PanelsTopLeft,
   Send,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { ClientGalleryPageSkeleton, InlineStatusSkeleton } from "@/components/ui/skeletons";
 
 const GRID_STORAGE_PREFIX = "gidostorage-share-grid:";
+const GALLERY_MUSIC_MUTE_PREFIX = "gidostorage-share-music-muted:";
 
 type GridLayout = "uniform" | "masonry" | "block" | "filmstrip" | "spotlight";
 
@@ -189,6 +192,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [zoom, setZoom] = useState(1);
   const [gridLayout, setGridLayout] = useState<GridLayout>("spotlight");
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [galleryMusicStarted, setGalleryMusicStarted] = useState(false);
+  const [galleryMusicMuted, setGalleryMusicMuted] = useState(false);
+
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(`${GRID_STORAGE_PREFIX}${token}`);
@@ -205,6 +212,83 @@ export function ClientGalleryApp({ token }: { token: string }) {
       /* ignore */
     }
   }, [token, gridLayout]);
+
+  const galleryMusicUrl = gallery?.backgroundMusicUrl?.trim() ?? "";
+  const musicAllowed =
+    galleryMusicUrl.length > 0 && gallery != null && gallery.backgroundMusicEnabled !== false;
+
+  useEffect(() => {
+    setGalleryMusicStarted(false);
+    try {
+      setGalleryMusicMuted(
+        sessionStorage.getItem(`${GALLERY_MUSIC_MUTE_PREFIX}${token}`) === "1",
+      );
+    } catch {
+      setGalleryMusicMuted(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!musicAllowed) setGalleryMusicStarted(false);
+  }, [musicAllowed]);
+
+  /** Try autoplay with sound; browsers often block until a gesture (handled below). */
+  useEffect(() => {
+    if (!musicAllowed || galleryMusicMuted) return;
+    const a = audioRef.current;
+    if (!a) return;
+    let cancelled = false;
+    void a.play().then(() => {
+      if (!cancelled) setGalleryMusicStarted(true);
+    }).catch(() => {
+      /* Autoplay blocked — first pointer gesture effect will retry. */
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [musicAllowed, galleryMusicMuted, galleryMusicUrl]);
+
+  /** First tap, key, wheel, touch, or scroll starts music when autoplay was blocked. */
+  useEffect(() => {
+    if (!musicAllowed || galleryMusicMuted || galleryMusicStarted) return;
+    const a = audioRef.current;
+    if (!a) return;
+    const tryStart = () => {
+      void a.play().then(() => {
+        setGalleryMusicStarted(true);
+      }).catch(() => {});
+    };
+    const opts = { capture: true, passive: true } as const;
+    window.addEventListener("pointerdown", tryStart, opts);
+    window.addEventListener("keydown", tryStart, opts);
+    window.addEventListener("wheel", tryStart, opts);
+    window.addEventListener("touchstart", tryStart, opts);
+    window.addEventListener("scroll", tryStart, opts);
+    return () => {
+      window.removeEventListener("pointerdown", tryStart, opts);
+      window.removeEventListener("keydown", tryStart, opts);
+      window.removeEventListener("wheel", tryStart, opts);
+      window.removeEventListener("touchstart", tryStart, opts);
+      window.removeEventListener("scroll", tryStart, opts);
+    };
+  }, [musicAllowed, galleryMusicMuted, galleryMusicStarted, galleryMusicUrl]);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !musicAllowed) return;
+    if (!galleryMusicStarted) return;
+    if (galleryMusicMuted) {
+      a.pause();
+    } else {
+      void a.play().catch(() => {});
+    }
+  }, [musicAllowed, galleryMusicStarted, galleryMusicMuted]);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+    };
+  }, []);
 
   useEffect(() => {
     if (gallery?.finalDelivery === false && photoTab === "edited") {
@@ -951,6 +1035,53 @@ export function ClientGalleryApp({ token }: { token: string }) {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {musicAllowed ? (
+        <>
+          <audio
+            ref={audioRef}
+            key={galleryMusicUrl}
+            src={galleryMusicUrl}
+            autoPlay
+            loop
+            playsInline
+            preload="auto"
+            className="sr-only"
+            aria-hidden
+          />
+          {galleryMusicStarted || galleryMusicMuted ? (
+            <div className="fixed bottom-4 right-4 z-[52] sm:bottom-6 sm:right-6">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !galleryMusicMuted;
+                  setGalleryMusicMuted(next);
+                  try {
+                    if (next) {
+                      sessionStorage.setItem(`${GALLERY_MUSIC_MUTE_PREFIX}${token}`, "1");
+                    } else {
+                      sessionStorage.removeItem(`${GALLERY_MUSIC_MUTE_PREFIX}${token}`);
+                      void audioRef.current?.play().then(() => {
+                        setGalleryMusicStarted(true);
+                      }).catch(() => {});
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200/90 bg-white/95 text-zinc-900 shadow-lg backdrop-blur-sm dark:border-zinc-600 dark:bg-zinc-900/95 dark:text-zinc-50"
+                aria-label={galleryMusicMuted ? "Unmute gallery music" : "Mute gallery music"}
+              >
+                {galleryMusicMuted ? (
+                  <VolumeX className="h-5 w-5" aria-hidden />
+                ) : (
+                  <Volume2 className="h-5 w-5" aria-hidden />
+                )}
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {confirmOpen ? (

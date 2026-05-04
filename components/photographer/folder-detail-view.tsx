@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -14,13 +14,16 @@ import {
   ImageIcon,
   Layers,
   Link2,
+  Music2,
   Images,
   Package,
   Share2,
   Sparkles,
   Trash2,
+  Upload,
   User,
   Lock,
+  RefreshCw,
   Unlock,
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
@@ -53,12 +56,14 @@ import {
   patchFolderStatus,
   deleteAllFolderFinalMedia,
   deleteAllFolderRawMedia,
+  deleteFolderBackgroundMusic,
   deleteFolderFinalMedia,
   deleteFolderRawMedia,
   postFolderMediaDuplicatePreview,
   regenerateFolderShare,
   unlockFolderFinalDelivery,
   updateFolder,
+  uploadFolderBackgroundMusic,
   uploadFolderFinalMedia,
   uploadFolderRawMedia,
   type ApiFolder,
@@ -192,12 +197,15 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [selectedFinalIds, setSelectedFinalIds] = useState<Set<string>>(() => new Set());
   const rawSelectAllRef = useRef<HTMLInputElement>(null);
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
+  const musicFileInputRef = useRef<HTMLInputElement>(null);
 
   const [focalEditOpen, setFocalEditOpen] = useState(false);
   const [focalDraft, setFocalDraft] = useState({ x: 50, y: 50 });
   const [savingFocal, setSavingFocal] = useState(false);
 
   /** After duplicate-preview: user chooses replace vs skip before uploading bytes. */
+  const [musicBusy, setMusicBusy] = useState(false);
+
   const [duplicateFilenamePrompt, setDuplicateFilenamePrompt] = useState<null | {
     kind: "raw" | "final";
     files: File[];
@@ -296,6 +304,53 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     const picked = selectionRows.filter((a) => a.selection === "SELECTED");
     return picked.length > 0 ? picked : selectionRows;
   }, [selectionRows]);
+
+  type FolderLightboxItem = { id: string; name: string; src: string };
+  const lightboxNavItems = useMemo((): FolderLightboxItem[] => {
+    if (tab === "uploads") {
+      return rawAssets.map((a) => ({ id: a.id, name: a.originalName, src: a.thumbUrl }));
+    }
+    if (tab === "selection") {
+      return clientSelectedAssets.map((a) => ({
+        id: a.id,
+        name: a.originalName,
+        src: a.thumbUrl,
+      }));
+    }
+    return finalAssets.map((f) => ({ id: f.id, name: f.name, src: f.url }));
+  }, [tab, rawAssets, clientSelectedAssets, finalAssets]);
+
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+
+  useEffect(() => {
+    setLightboxId(null);
+    setLightboxZoom(1);
+  }, [tab]);
+
+  useEffect(() => {
+    if (!lightboxId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLightboxId(null);
+        setLightboxZoom(1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxId]);
+
+  const lbNavIndex = lightboxId
+    ? lightboxNavItems.findIndex((item) => item.id === lightboxId)
+    : -1;
+  const lbItem = lbNavIndex >= 0 ? lightboxNavItems[lbNavIndex] : null;
+
+  useEffect(() => {
+    if (lightboxId && lbNavIndex < 0) {
+      setLightboxId(null);
+      setLightboxZoom(1);
+    }
+  }, [lightboxId, lbNavIndex]);
 
   const rawIdsKey = useMemo(
     () => rawAssets.map((a) => a.id).sort().join("\0"),
@@ -623,6 +678,73 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     setFocalEditOpen(false);
   }
 
+  async function onBackgroundMusicFileChange(ev: ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file || !folder) return;
+    setMusicBusy(true);
+    try {
+      const updated = await uploadFolderBackgroundMusic(folder._id, file);
+      setFolder(updated);
+      showToast("Background music uploaded.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not upload audio.",
+        "error",
+      );
+    } finally {
+      setMusicBusy(false);
+    }
+  }
+
+  async function onRemoveBackgroundMusic() {
+    if (!folder) return;
+    const hasTrack = Boolean(folder.backgroundMusicUrl || folder.backgroundMusic);
+    if (!hasTrack) return;
+    if (!confirm("Remove background music from this gallery?")) return;
+    setMusicBusy(true);
+    try {
+      const updated = await deleteFolderBackgroundMusic(folder._id);
+      setFolder(updated);
+      showToast("Background music removed.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not remove audio.",
+        "error",
+      );
+    } finally {
+      setMusicBusy(false);
+    }
+  }
+
+  async function onToggleBackgroundMusicForClients(next: boolean) {
+    if (!folder || musicBusy) return;
+    setMusicBusy(true);
+    try {
+      const updated = await updateFolder(folder._id, { backgroundMusicEnabled: next });
+      setFolder(updated);
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not update setting.",
+        "error",
+      );
+    } finally {
+      setMusicBusy(false);
+    }
+  }
+
   function mediaDeleteBlocked() {
     return busy || uploadProgress !== null || deletingKey !== null;
   }
@@ -910,6 +1032,103 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </span>
       </nav>
 
+      {/* Background music — compact toolbar */}
+      <div className="relative overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm shadow-black/5 dark:border-zinc-700 dark:bg-zinc-950 dark:shadow-black/25">
+        <div
+          className="relative flex flex-wrap items-center gap-2.5 rounded-[0.9rem] px-2.5 py-2 sm:gap-3 sm:px-3.5 sm:py-2.5"
+          role="group"
+          aria-label="Background music for client gallery"
+        >
+          <input
+            ref={musicFileInputRef}
+            type="file"
+            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus,.webm,application/ogg"
+            className="sr-only"
+            onChange={(ev) => void onBackgroundMusicFileChange(ev)}
+          />
+          <span className="sr-only">Background music</span>
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm shadow-brand/25"
+            aria-hidden
+          >
+            <Music2 className="h-4 w-4" strokeWidth={2.25} />
+          </div>
+          {folder.backgroundMusicUrl ? (
+            <div className="min-w-0 flex-1 overflow-hidden rounded-xl bg-zinc-50 px-1.5 py-1 ring-1 ring-inset ring-zinc-200/90 dark:bg-zinc-900 dark:ring-zinc-600/80 sm:max-w-[13rem]">
+              <audio
+                controls
+                src={folder.backgroundMusicUrl}
+                className="h-8 w-full max-w-full accent-zinc-700 dark:accent-zinc-300"
+                preload="metadata"
+              />
+            </div>
+          ) : (
+            <div
+              className="pointer-events-none min-h-8 min-w-[5rem] flex-1 rounded-xl bg-zinc-100 ring-1 ring-inset ring-zinc-200/80 dark:bg-zinc-800/80 dark:ring-zinc-700/60"
+              aria-hidden
+            />
+          )}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              disabled={musicBusy}
+              onClick={() => musicFileInputRef.current?.click()}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-700 shadow-sm shadow-black/5 ring-1 ring-zinc-200/90 transition hover:scale-[1.04] hover:bg-zinc-50 hover:shadow-md hover:shadow-black/8 active:scale-100 disabled:pointer-events-none disabled:opacity-45 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-600 dark:hover:bg-zinc-800"
+              aria-label={folder.backgroundMusicUrl ? "Replace background music" : "Upload background music"}
+            >
+              {musicBusy ? (
+                <span className="text-[10px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
+                  …
+                </span>
+              ) : (
+                <Upload className="h-4 w-4" aria-hidden />
+              )}
+            </button>
+            {folder.backgroundMusicUrl || folder.backgroundMusic ? (
+              <button
+                type="button"
+                disabled={musicBusy}
+                onClick={() => void onRemoveBackgroundMusic()}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-red-600 shadow-sm shadow-black/5 ring-1 ring-red-200/80 transition hover:scale-[1.04] hover:bg-red-50 hover:shadow-md hover:shadow-black/8 active:scale-100 disabled:pointer-events-none disabled:opacity-45 dark:bg-zinc-900 dark:text-red-400 dark:ring-red-900/45 dark:hover:bg-red-950/30"
+                aria-label="Remove background music"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
+            <span
+              className="mx-0.5 hidden h-6 w-px shrink-0 bg-zinc-200 dark:bg-zinc-600 sm:inline"
+              aria-hidden
+            />
+            <span className="sr-only">Play background music for clients</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={folder.backgroundMusicEnabled !== false}
+              disabled={musicBusy}
+              onClick={() =>
+                void onToggleBackgroundMusicForClients(!(folder.backgroundMusicEnabled !== false))
+              }
+              className={cn(
+                "relative inline-flex h-8 w-[3.25rem] shrink-0 items-center rounded-full border-2 transition hover:opacity-95 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45",
+                folder.backgroundMusicEnabled !== false
+                  ? "border-zinc-700 bg-zinc-900 shadow-sm shadow-black/20 dark:border-zinc-500 dark:bg-zinc-100"
+                  : "border-zinc-200 bg-zinc-200 dark:border-zinc-600 dark:bg-zinc-800",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-1 h-6 w-6 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-[left,transform] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] dark:ring-black/20",
+                  folder.backgroundMusicEnabled !== false
+                    ? "left-[1.5rem] dark:bg-zinc-900"
+                    : "left-0.5",
+                )}
+                aria-hidden
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Hero */}
       <section
         className={cn(
@@ -932,83 +1151,84 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           />
           <div
             className={cn(
-              "absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/45 to-zinc-900/20 transition-opacity duration-300",
-              focalEditOpen && "from-zinc-950/[0.98] via-zinc-950/50",
+              "absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/40 to-zinc-900/15 transition-opacity duration-300",
+              focalEditOpen && "from-zinc-950/[0.97] via-zinc-950/50",
             )}
             aria-hidden
           />
         </div>
 
-        <div className="relative z-10 flex min-h-[200px] flex-1 flex-col justify-between gap-5 p-5 md:min-h-[240px] md:gap-6 md:p-7">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="relative z-10 flex min-h-[168px] flex-1 flex-col justify-between gap-3 p-5 md:min-h-[188px] md:gap-4 md:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <Link
               href="/dashboard/galleries"
-              className="inline-flex items-center gap-2 rounded-lg bg-white/12 px-3 py-2 text-xs font-semibold text-white shadow-sm ring-1 ring-white/15 backdrop-blur-md transition hover:bg-white/18"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/12 px-2.5 py-1.5 text-[11px] font-semibold text-white ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-white/18 md:px-3 md:py-2 md:text-xs"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
               Back to galleries
             </Link>
-            <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider transition-opacity duration-200 ${statusStyles(folderStatus)} ${focalEditOpen ? "opacity-90" : ""}`}
-            >
-              {statusLabel(folderStatus)}
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2 md:gap-2.5">
+              {folderStatus !== "COMPLETED" ? (
+                <button
+                  type="button"
+                  onClick={markCompleted}
+                  disabled={busy}
+                  className="text-[10px] font-semibold text-white/75 underline decoration-white/25 underline-offset-2 transition hover:text-white hover:decoration-white/50 disabled:cursor-not-allowed disabled:opacity-40 md:text-[11px]"
+                >
+                  Mark completed
+                </button>
+              ) : null}
+              <span
+                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider md:px-3 md:py-1 md:text-[11px] ${statusStyles(folderStatus)} ${focalEditOpen ? "opacity-90" : ""}`}
+              >
+                {statusLabel(folderStatus)}
+              </span>
+            </div>
           </div>
 
-          <div className="max-w-3xl">
-            <h1 className="text-3xl font-semibold tracking-tight text-white md:text-[2rem] md:leading-tight">
+          <div className="max-w-2xl space-y-2 md:space-y-2.5">
+            <h1 className="text-xl font-semibold leading-snug tracking-tight text-white md:text-2xl">
               {title}
             </h1>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-sm">
-                <User className="h-3.5 w-3.5 shrink-0 text-white/70" aria-hidden />
+            <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-white/75 md:text-xs">
+              <span className="inline-flex items-center gap-1">
+                <User className="h-3 w-3 shrink-0 text-white/55" aria-hidden />
                 {clientName}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-sm">
-                <Calendar className="h-3.5 w-3.5 shrink-0 text-white/70" aria-hidden />
+              <span className="text-white/35" aria-hidden>
+                ·
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Calendar className="h-3 w-3 shrink-0 text-white/55" aria-hidden />
                 {eventDateLabel}
               </span>
             </div>
             {folder.description ? (
-              <p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/70">
+              <p className="line-clamp-2 text-[11px] leading-relaxed text-white/65 md:text-xs">
                 {folder.description}
               </p>
             ) : null}
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={markCompleted}
-                disabled={busy || folderStatus === "COMPLETED"}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow-md shadow-black/10 ring-1 ring-black/5 transition hover:bg-zinc-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:active:scale-100"
-              >
-                {folderStatus === "COMPLETED" ? (
-                  <>
-                    <Check className="h-4 w-4 text-emerald-600" aria-hidden />
-                    Completed
-                  </>
-                ) : (
-                  "Mark completed"
-                )}
-              </button>
+            <div className="flex flex-wrap pt-0.5">
               <button
                 type="button"
                 onClick={() => (focalEditOpen ? cancelFocalEditor() : openFocalEditor())}
                 disabled={busy || savingFocal}
                 aria-expanded={focalEditOpen}
                 aria-controls="folder-cover-framing-panel"
+                aria-label={focalEditOpen ? "Close cover framing editor" : "Cover framing"}
+                title={focalEditOpen ? "Close editor" : "Cover framing"}
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-md backdrop-blur-md transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100",
+                  "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 md:size-9",
                   focalEditOpen
-                    ? "border border-white/45 bg-white/20 text-white ring-2 ring-white/25"
-                    : "border border-white/35 bg-white/10 text-white hover:bg-white/18",
+                    ? "border-white/45 bg-white/18 ring-1 ring-white/25"
+                    : "",
                 )}
               >
                 {focalEditOpen ? (
-                  <ChevronUp className="h-4 w-4 shrink-0 opacity-95" aria-hidden />
+                  <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
                 ) : (
                   <Focus className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
                 )}
-                {focalEditOpen ? "Close editor" : "Cover framing"}
               </button>
             </div>
           </div>
@@ -1066,48 +1286,45 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </div>
       </section>
 
-      {/* Share */}
-      <section className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm shadow-brand/25">
-            <Share2 className="h-5 w-5" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
-              Client gallery link
-            </h2>
-            <p className="mt-1 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-              Share this read-only URL with your client so they can view and select photos.
-            </p>
-            {folder.share?.selectionSubmittedAt ? (
-              <p className="mt-3 inline-flex flex-wrap items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
-                Client submitted picks on{" "}
-                {new Date(folder.share.selectionSubmittedAt).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}
+      {/* Share — compact */}
+      <section className="rounded-xl border border-zinc-200/90 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white shadow-sm shadow-brand/20">
+              <Share2 className="h-4 w-4" aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+                Client gallery link
+              </h2>
+              <p className="sr-only">
+                Share this read-only URL with your client so they can view and select photos.
               </p>
-            ) : null}
+            </div>
           </div>
+          {folder.share?.selectionSubmittedAt ? (
+            <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300">
+              Submitted{" "}
+              {new Date(folder.share.selectionSubmittedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </span>
+          ) : null}
         </div>
 
-        <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-end">
-          <label className="block min-w-0 flex-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-              Share URL
-            </span>
-            <div className="mt-1.5 flex overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/80 focus-within:ring-2 focus-within:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-900/60">
-              <div className="flex shrink-0 items-center border-r border-zinc-200/80 bg-zinc-100/60 px-2.5 dark:border-zinc-700 dark:bg-zinc-900/80">
-                <Link2 className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-              </div>
-              <input
-                readOnly
-                className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2 font-mono text-[11px] leading-snug text-zinc-800 outline-none dark:text-zinc-100 sm:text-xs"
-                value={shareActive ? shareUrl : "Sharing is not enabled for this gallery yet."}
-              />
-            </div>
-          </label>
-          <div className="flex flex-wrap gap-2 lg:shrink-0">
+        <div className="mt-3 flex overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/80 shadow-sm focus-within:ring-2 focus-within:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-900/50">
+          <div className="flex shrink-0 items-center border-r border-zinc-200 bg-zinc-100/70 px-2 dark:border-zinc-700 dark:bg-zinc-900/80">
+            <Link2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+          </div>
+          <input
+            readOnly
+            className="min-w-0 flex-1 cursor-default truncate border-0 bg-transparent px-2 py-2 font-mono text-[11px] leading-snug text-zinc-800 outline-none dark:text-zinc-100 sm:text-xs"
+            value={shareActive ? shareUrl : "Sharing not enabled yet."}
+            title={shareActive ? shareUrl : undefined}
+            aria-label="Share URL"
+          />
+          <div className="flex shrink-0 divide-x divide-zinc-200 border-l border-zinc-200 dark:divide-zinc-700 dark:border-zinc-700">
             <button
               type="button"
               disabled={!shareActive}
@@ -1121,45 +1338,48 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   showToast("Could not copy link.", "error");
                 }
               }}
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+              className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-35 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              aria-label={linkCopied ? "Copied" : "Copy share link"}
             >
               {linkCopied ? (
-                <Check className="h-4 w-4" aria-hidden />
+                <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
               ) : (
                 <Copy className="h-4 w-4" aria-hidden />
               )}
-              {linkCopied ? "Copied" : "Copy"}
             </button>
             {shareActive ? (
               <a
                 href={shareUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 sm:flex-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                aria-label="Open share link"
               >
                 <ExternalLink className="h-4 w-4" aria-hidden />
-                Open
               </a>
             ) : null}
             <button
               type="button"
               disabled={busy}
               onClick={onRegenerateLink}
-              className="inline-flex flex-1 items-center justify-center rounded-lg border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+              className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              aria-label="Regenerate share link"
             >
-              Regenerate
+              <RefreshCw className="h-4 w-4" aria-hidden />
             </button>
           </div>
         </div>
 
-        <div className="mt-5 border-t border-zinc-100 pt-5 dark:border-zinc-800">
-          <label className="block max-w-md text-sm text-zinc-600 dark:text-zinc-300">
-            <span className="mb-1.5 block font-medium text-zinc-700 dark:text-zinc-200">New link expiry</span>
+        <div className="mt-2.5 flex flex-col gap-1.5 sm:mt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+          <label className="inline-flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Expires</span>
             <select
-              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 outline-none transition focus:ring-2 focus:ring-brand/35 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-900 outline-none transition focus:ring-2 focus:ring-brand/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               value={linkExpiry}
               disabled={busy}
               onChange={(e) => setLinkExpiry(e.target.value)}
+              aria-label="New link expiry"
+              title="Used when you regenerate the link."
             >
               {expiryPresets.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -1168,11 +1388,10 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               ))}
             </select>
           </label>
+          <p className="text-[10px] leading-snug text-zinc-400 dark:text-zinc-500 sm:max-w-md">
+            New expiry applies the next time you regenerate.
+          </p>
         </div>
-        <p className="mt-4 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
-          Regenerate applies the expiry above. The current link may show a different expiry until you
-          regenerate.
-        </p>
       </section>
 
       {/* Tabs */}
@@ -1323,13 +1542,23 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${a.originalName}`}
                         />
                       </label>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={a.thumbUrl}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
+                      <button
+                        type="button"
+                        className="absolute inset-0 z-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
+                        onClick={() => {
+                          setLightboxId(a.id);
+                          setLightboxZoom(1);
+                        }}
+                        aria-label={`Preview ${a.originalName}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={a.thumbUrl}
+                          alt=""
+                          className="pointer-events-none h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </button>
                     </div>
                     <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
                       <span
@@ -1385,13 +1614,23 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     className="overflow-hidden rounded-xl border border-rose-200/70 bg-white shadow-sm ring-1 ring-rose-100/60 dark:border-rose-900/50 dark:bg-zinc-950 dark:ring-rose-950/40"
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={a.thumbUrl}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
+                      <button
+                        type="button"
+                        className="absolute inset-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
+                        onClick={() => {
+                          setLightboxId(a.id);
+                          setLightboxZoom(1);
+                        }}
+                        aria-label={`Preview ${a.originalName}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={a.thumbUrl}
+                          alt=""
+                          className="pointer-events-none h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </button>
                     </div>
                     <div className="space-y-2 border-t border-zinc-100 p-3 text-xs dark:border-zinc-800">
                       <p className="font-semibold leading-tight text-zinc-800 dark:text-zinc-100">
@@ -1516,13 +1755,23 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${f.name}`}
                         />
                       </label>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={f.url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
+                      <button
+                        type="button"
+                        className="absolute inset-0 z-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
+                        onClick={() => {
+                          setLightboxId(f.id);
+                          setLightboxZoom(1);
+                        }}
+                        aria-label={`Preview ${f.name}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={f.url}
+                          alt=""
+                          className="pointer-events-none h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </button>
                       {f.locked ? (
                         <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                           <Lock className="h-3 w-3" aria-hidden />
@@ -1663,6 +1912,101 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {lightboxId && lbItem ? (
+        <div
+          className="fixed inset-0 z-[115] flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close preview"
+            onClick={() => {
+              setLightboxId(null);
+              setLightboxZoom(1);
+            }}
+          />
+          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLightboxZoom((z) => Math.min(2.5, z + 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom +
+              </button>
+              <button
+                type="button"
+                onClick={() => setLightboxZoom((z) => Math.max(1, z - 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom −
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxId(null);
+                  setLightboxZoom(1);
+                }}
+                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex flex-1 items-center justify-center overflow-auto">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={lbItem.src}
+                alt={lbItem.name}
+                className="max-h-[75vh] max-w-full object-contain transition-transform duration-200"
+                style={{ transform: `scale(${lightboxZoom})` }}
+              />
+            </div>
+            <div className="flex items-center gap-4 text-white">
+              <button
+                type="button"
+                disabled={lbNavIndex <= 0}
+                onClick={() => {
+                  const prev = lightboxNavItems[lbNavIndex - 1];
+                  if (prev) {
+                    setLightboxId(prev.id);
+                    setLightboxZoom(1);
+                  }
+                }}
+                className="shrink-0 rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
+              >
+                ← Previous
+              </button>
+              <p
+                className="min-w-0 flex-1 truncate text-center text-sm text-white/90"
+                title={lbItem.name}
+              >
+                {lbNavIndex + 1} / {lightboxNavItems.length}
+                {lbItem.name ? (
+                  <span className="mt-1 block truncate text-xs text-white/70">{lbItem.name}</span>
+                ) : null}
+              </p>
+              <button
+                type="button"
+                disabled={lbNavIndex < 0 || lbNavIndex >= lightboxNavItems.length - 1}
+                onClick={() => {
+                  const next = lightboxNavItems[lbNavIndex + 1];
+                  if (next) {
+                    setLightboxId(next.id);
+                    setLightboxZoom(1);
+                  }
+                }}
+                className="shrink-0 rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
+              >
+                Next →
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

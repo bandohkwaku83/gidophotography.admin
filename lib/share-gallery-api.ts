@@ -40,6 +40,10 @@ export type NormalizedShareGallery = {
   finalDelivery?: boolean;
   /** Hint for client UI to apply screenshot/download discouragement. */
   rightsProtection?: boolean;
+  /** Absolute URL for optional looping background music (empty when disabled or not set). */
+  backgroundMusicUrl?: string;
+  /** When false, clients should not play music. Defaults to true when omitted. */
+  backgroundMusicEnabled?: boolean;
   assets: ShareGalleryAsset[];
   finals: ShareGalleryFinal[];
   counts?: { uploads: number; selected: number; finals: number };
@@ -82,6 +86,14 @@ function str(v: unknown): string {
 
 function bool(v: unknown, defaultVal = false): boolean {
   return typeof v === "boolean" ? v : defaultVal;
+}
+
+/** Share flag: explicit false / 0 / "false" / "no" → off; otherwise on (matches folder update accepted values). */
+function shareTruthyOn(v: unknown): boolean {
+  if (v === false || v === 0 || v === "0" || v === "false" || v === "no" || v === "NO") {
+    return false;
+  }
+  return true;
 }
 
 /** Resolve image URLs the same way as folder covers (relative → same-origin or API base). */
@@ -378,6 +390,21 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
             ? ((root as Raw).rights_protection as boolean)
             : undefined;
 
+  const bgEnabledRaw =
+    folderPayload.backgroundMusicEnabled ?? folder?.backgroundMusicEnabled ?? root.backgroundMusicEnabled;
+  const backgroundMusicEnabled = shareTruthyOn(bgEnabledRaw);
+
+  const bgUrlRaw =
+    str(folder?.backgroundMusicUrl) ||
+    str((folder as Raw | null)?.background_music_url) ||
+    str(folderPayload.backgroundMusicUrl) ||
+    str((folderPayload as Raw).background_music_url) ||
+    str(root.backgroundMusicUrl) ||
+    str((root as Raw).background_music_url) ||
+    "";
+  const backgroundMusicUrl =
+    backgroundMusicEnabled && bgUrlRaw ? resolvePublicGalleryImageUrl(bgUrlRaw) : undefined;
+
   return {
     folderId,
     clientName,
@@ -392,6 +419,8 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     selectionLocked,
     finalDelivery,
     rightsProtection,
+    backgroundMusicUrl,
+    backgroundMusicEnabled,
     assets,
     finals,
     counts,

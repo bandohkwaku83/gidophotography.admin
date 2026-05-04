@@ -64,6 +64,12 @@ export type ApiFolder = {
   coverImage?: string;
   /** Fully-qualified URL when available (preferred for rendering). */
   coverImageUrl?: string;
+  /** Stored path for optional gallery background music (e.g. uploads/gallery-music/...). */
+  backgroundMusic?: string;
+  /** Fully-qualified URL when available (admin; empty when disabled). */
+  backgroundMusicUrl?: string;
+  /** When false, share responses omit playable music URL for clients. Default true when omitted. */
+  backgroundMusicEnabled?: boolean;
   /** Focal point for `object-position` on cover (0–100). Omitted = centered. */
   coverFocalX?: number;
   coverFocalY?: number;
@@ -131,6 +137,7 @@ export type UpdateFolderInput = {
   useDefaultCover?: boolean;
   coverFocalX?: number;
   coverFocalY?: number;
+  backgroundMusicEnabled?: boolean;
 };
 
 export class FoldersApiError extends Error {
@@ -369,6 +376,7 @@ export async function updateFolder(
       useDefaultCover:
         input.useDefaultCover === undefined ? undefined : input.useDefaultCover ? "true" : "false",
       ...focalFields,
+      backgroundMusicEnabled: input.backgroundMusicEnabled,
     },
     input.coverImage,
   );
@@ -406,6 +414,55 @@ export async function deleteFolder(id: string): Promise<void> {
       body,
     );
   }
+}
+
+/** Multipart PUT: field `backgroundMusic` (one file). Replaces any previous track. */
+export async function uploadFolderBackgroundMusic(
+  folderId: string,
+  file: File,
+): Promise<ApiFolder> {
+  const fd = new FormData();
+  fd.append("backgroundMusic", file);
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/background-music`,
+    {
+      method: "PUT",
+      body: fd,
+    },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:background-music:put]", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Could not upload background music (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  if (body && typeof body === "object" && "folder" in body) {
+    return (body as { folder: ApiFolder }).folder;
+  }
+  return body as ApiFolder;
+}
+
+export async function deleteFolderBackgroundMusic(folderId: string): Promise<ApiFolder> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/background-music`,
+    { method: "DELETE" },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:background-music:delete]", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Could not remove background music (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  if (body && typeof body === "object" && "folder" in body) {
+    return (body as { folder: ApiFolder }).folder;
+  }
+  return body as ApiFolder;
 }
 
 /* ------------------------------------------------------------------ */
