@@ -50,7 +50,7 @@ import {
   folderCoverObjectPositionStyle,
   FALLBACK_SHARE_EXPIRY_PRESETS,
   FoldersApiError,
-  folderFinalsPaymentLocked,
+  finalImagesLockedForClient,
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
   parseFolderCoverFocal,
@@ -300,19 +300,10 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     [folder],
   );
 
-  const finalsPaymentLocked = useMemo(
-    () => (folder ? folderFinalsPaymentLocked(folder) : false),
+  /** True → show **Unlock images**; false → show **Lock images** (driven by GET folder + PATCH lock/unlock). */
+  const finalImagesLocked = useMemo(
+    () => (folder ? finalImagesLockedForClient(folder) : false),
     [folder],
-  );
-  const showUnlockFinalDelivery = useMemo(
-    () =>
-      finalAssets.length > 0 &&
-      (finalsPaymentLocked || finalAssets.some((f) => f.locked)),
-    [finalAssets, finalsPaymentLocked],
-  );
-  const showLockFinalDelivery = useMemo(
-    () => finalAssets.length > 0 && !finalsPaymentLocked,
-    [finalAssets, finalsPaymentLocked],
   );
 
   const selectionRows = useMemo(
@@ -1709,8 +1700,36 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   Upload finished edits for client delivery.
                 </p>
                 {finalAssets.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {showLockFinalDelivery ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tabular-nums",
+                        finalImagesLocked
+                          ? "bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100"
+                          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+                      )}
+                    >
+                      {finalImagesLocked ? "Locked" : "Unlocked"}
+                    </span>
+                    {finalImagesLocked ? (
+                      <button
+                        type="button"
+                        onClick={() => void onUnlockFinalDelivery()}
+                        disabled={
+                          unlockingFinals || lockingFinalDelivery || busy || mediaDeleteBlocked()
+                        }
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                      >
+                        {unlockingFinals ? (
+                          <InlineActionSkeleton />
+                        ) : (
+                          <>
+                            <Unlock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            Unlock images
+                          </>
+                        )}
+                      </button>
+                    ) : (
                       <button
                         type="button"
                         onClick={() => {
@@ -1718,31 +1737,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           setLockFinalDeliveryOpen(true);
                         }}
                         disabled={lockingFinalDelivery || unlockingFinals || busy || mediaDeleteBlocked()}
-                        className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                        className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-brand/25 transition hover:bg-brand-hover disabled:opacity-50 dark:hover:bg-brand-hover"
                       >
                         <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        Lock for payment
+                        Lock images
                       </button>
-                    ) : null}
-                    {showUnlockFinalDelivery ? (
-                      <button
-                        type="button"
-                        onClick={() => void onUnlockFinalDelivery()}
-                        disabled={
-                          unlockingFinals || lockingFinalDelivery || busy || mediaDeleteBlocked()
-                        }
-                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
-                      >
-                        {unlockingFinals ? (
-                          <InlineActionSkeleton />
-                        ) : (
-                          <>
-                            <Unlock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                            Unlock client downloads
-                          </>
-                        )}
-                      </button>
-                    ) : null}
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -1921,7 +1921,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover disabled:opacity-50"
                 onClick={() => void onLockFinalDelivery()}
               >
-                {lockingFinalDelivery ? "Locking…" : "Lock previews"}
+                {lockingFinalDelivery ? "Locking…" : "Lock images"}
               </button>
             </div>
           </div>

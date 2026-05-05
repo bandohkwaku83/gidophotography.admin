@@ -7,6 +7,7 @@ import {
   getShareFinalDownloadUrl,
   getShareFinalLockedPreviewUrl,
   getShareGallery,
+  downloadShareFinalsZip,
   type NormalizedShareGallery,
   ShareGalleryError,
   submitShareGallerySelectionsToPhotographer,
@@ -26,6 +27,7 @@ import {
   GalleryHorizontal,
   Heart,
   LayoutGrid,
+  Loader2,
   Lock,
   PanelsTopLeft,
   Send,
@@ -200,6 +202,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [photoTab, setPhotoTab] = useState<"all" | "selected" | "edited">("all");
   const [zoom, setZoom] = useState(1);
   const [gridLayout, setGridLayout] = useState<GridLayout>("spotlight");
+  const [downloadAllFinalsBusy, setDownloadAllFinalsBusy] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [galleryMusicStarted, setGalleryMusicStarted] = useState(false);
@@ -358,6 +361,11 @@ export function ClientGalleryApp({ token }: { token: string }) {
     return assets;
   }, [assets, photoTab]);
 
+  const downloadableFinals = useMemo(
+    () => (gallery ? gallery.finals.filter((f) => !f.locked) : []),
+    [gallery],
+  );
+
   /** Photos to navigate in the lightbox (matches current tab’s upload list). */
   const lightboxNavAssets = visibleAssets;
 
@@ -403,6 +411,29 @@ export function ClientGalleryApp({ token }: { token: string }) {
     setGallery(g);
     setAssets(toDemoAssets(g.assets));
     return g;
+  }
+
+  async function handleDownloadAllFinals() {
+    if (!gallery || downloadableFinals.length === 0 || downloadAllFinalsBusy) return;
+    setDownloadAllFinalsBusy(true);
+    try {
+      await downloadShareFinalsZip(
+        token,
+        downloadableFinals.map((f) => ({ id: f.id, name: f.name })),
+      );
+      showToast("Download started.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof ShareGalleryError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not download all files.",
+        "error",
+      );
+    } finally {
+      setDownloadAllFinalsBusy(false);
+    }
   }
 
   async function toggleSelect(id: string) {
@@ -640,7 +671,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                   priority
                 />
               </div>
-              {!editingLocked ? (
+              {!editingLocked && photoTab !== "edited" ? (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
                   <span className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/70 px-4 py-2 text-xs font-semibold text-zinc-800 shadow-sm backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-100">
                     <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500" aria-hidden />
@@ -870,7 +901,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {gallery.selectionSubmitted && !editingLocked ? (
+      {gallery.selectionSubmitted && !editingLocked && photoTab !== "edited" ? (
         <div className="mx-auto max-w-3xl px-4 py-3">
           <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
             You&apos;ve already submitted your favorites. You can still change your picks anytime
@@ -880,7 +911,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
       ) : null}
 
       <main className="mx-auto max-w-6xl px-4 py-8 pb-12 lg:px-8">
-        {gallery.coverImageUrl && !editingLocked ? (
+        {gallery.coverImageUrl && !editingLocked && photoTab !== "edited" ? (
           <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
             <span className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
               <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500" aria-hidden />
@@ -907,7 +938,25 @@ export function ClientGalleryApp({ token }: { token: string }) {
               Edited photos will appear here when your photographer delivers them.
             </p>
           ) : (
-            <ul className={galleryListClass(gridLayout)}>
+            <>
+              {downloadableFinals.length > 0 ? (
+                <div className="mb-4 flex justify-end">
+                  <button
+                    type="button"
+                    disabled={downloadAllFinalsBusy}
+                    onClick={() => void handleDownloadAllFinals()}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                  >
+                    {downloadAllFinalsBusy ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Download className="h-4 w-4 shrink-0" aria-hidden />
+                    )}
+                    {downloadAllFinalsBusy ? "Preparing zip…" : "Download all"}
+                  </button>
+                </div>
+              ) : null}
+              <ul className={galleryListClass(gridLayout)}>
               {gallery.finals.map((f, index) => {
                 const locked = Boolean(f.locked);
                 const imgSrc = finalDisplaySrc(f, token);
@@ -966,6 +1015,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 );
               })}
             </ul>
+            </>
           )
         ) : visibleAssets.length === 0 ? (
           <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">

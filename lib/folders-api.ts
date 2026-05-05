@@ -1062,9 +1062,45 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
   };
 }
 
+function readOutstandingAmountGhs(o: Record<string, unknown>): number {
+  const raw =
+    o.outstandingAmountGHS ??
+    o.outstanding_amount_ghs ??
+    o.amountRemainingGHS ??
+    o.amount_remaining_ghs;
+  if (typeof raw === "number" && Number.isFinite(raw)) return Math.max(0, raw);
+  if (typeof raw === "string" && raw.trim()) {
+    const n = Number(raw.trim().replace(/,/g, ""));
+    if (Number.isFinite(n)) return Math.max(0, n);
+  }
+  return 0;
+}
+
+function nestedRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
 /** True when the folder detail API indicates client finals are still payment-locked. */
 export function folderFinalsPaymentLocked(folder: ApiFolder): boolean {
   const root = folder as Record<string, unknown>;
+
+  if (readOutstandingAmountGhs(root) > 0) return true;
+
+  const fd = nestedRecord(root.finalDelivery) ?? nestedRecord(root.final_delivery);
+  if (fd) {
+    if (
+      truthyFolderFlag(fd.locked) ||
+      truthyFolderFlag(fd.paymentLocked) ||
+      truthyFolderFlag(fd.payment_locked)
+    ) {
+      return true;
+    }
+    if (readOutstandingAmountGhs(fd) > 0) return true;
+  }
+
+  if (truthyFolderFlag(root.finalDeliveryLock) || truthyFolderFlag(root.final_delivery_lock)) {
+    return true;
+  }
   if (truthyFolderFlag(root.finalsPaymentLocked) || truthyFolderFlag(root.finals_payment_locked)) {
     return true;
   }
@@ -1074,6 +1110,7 @@ export function folderFinalsPaymentLocked(folder: ApiFolder): boolean {
   const share = root.share;
   if (share && typeof share === "object") {
     const s = share as Record<string, unknown>;
+    if (readOutstandingAmountGhs(s) > 0) return true;
     const shareLockKeys = [
       "finalsPaymentLocked",
       "finals_payment_locked",
@@ -1114,6 +1151,12 @@ export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
     m.locked === true ||
     truthyFlag(o.isLocked) ||
     truthyFlag(o.is_locked) ||
+    truthyFlag(o.isPaymentLocked) ||
+    truthyFlag(o.is_payment_locked) ||
+    truthyFlag(o.finalLocked) ||
+    truthyFlag(o.final_locked) ||
+    truthyFlag(o.clientLocked) ||
+    truthyFlag(o.client_locked) ||
     truthyFlag(o.lockImages) ||
     truthyFlag(o.paymentLocked) ||
     truthyFlag(o.payment_locked) ||
@@ -1121,6 +1164,18 @@ export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
     truthyFlag(o.download_locked) ||
     lockStatus.toLowerCase() === "locked";
   return { id, name, url, locked };
+}
+
+/**
+ * Whether client final images behave as locked (after `PATCH .../final-delivery/lock`, until unlock).
+ * Combines folder-level flags, outstanding balance hints, and per-final `locked` from GET folder.
+ */
+export function finalImagesLockedForClient(folder: ApiFolder): boolean {
+  if (folderFinalsPaymentLocked(folder)) return true;
+  for (const m of extractFinalMediaList(folder)) {
+    if (apiFolderMediaToFinal(m).locked) return true;
+  }
+  return false;
 }
 
 export function apiFolderStatusToUi(s?: string): FolderStatus {

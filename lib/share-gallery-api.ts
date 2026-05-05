@@ -583,6 +583,74 @@ export function getShareFinalDownloadUrl(shareToken: string, finalId: string): s
   );
 }
 
+export type ShareFinalZipEntry = { id: string; name: string };
+
+function safeZipEntryName(original: string, used: Map<string, number>): string {
+  const cleaned =
+    (original.trim() || "photo").replace(/[/\\?*:|"<>]/g, "_").replace(/\s+/g, " ").trim() || "photo";
+  const n = (used.get(cleaned) ?? 0) + 1;
+  used.set(cleaned, n);
+  if (n === 1) return cleaned;
+  const dot = cleaned.lastIndexOf(".");
+  if (dot > 0) {
+    return `${cleaned.slice(0, dot)} (${n})${cleaned.slice(dot)}`;
+  }
+  return `${cleaned} (${n})`;
+}
+
+/**
+ * Fetch each final via public download URLs and trigger a single .zip download in the browser.
+ * Only pass finals that are unlocked for download.
+ */
+export async function downloadShareFinalsZip(
+  shareToken: string,
+  finals: ShareFinalZipEntry[],
+): Promise<void> {
+  if (finals.length === 0) return;
+  if (typeof window === "undefined") return;
+
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  const used = new Map<string, number>();
+
+  for (const f of finals) {
+    const url = getShareFinalDownloadUrl(shareToken, f.id);
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await parseJson(res);
+      throw new ShareGalleryError(
+        extractMessage(body, `Could not download “${f.name}” (${res.status}).`),
+        res.status,
+        body,
+      );
+    }
+    const buf = await res.arrayBuffer();
+    zip.file(safeZipEntryName(f.name || `final-${f.id}`, used), buf);
+  }
+
+  const blob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+
+  const safeToken = shareToken.replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "gallery";
+  const filename = `finals-${safeToken}.zip`;
+
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 /** Locked-state preview image (watermarked / limited). Use as `<img src>` when `final.locked`. */
 export function getShareFinalLockedPreviewUrl(shareToken: string, finalId: string): string {
   return apiUrl(

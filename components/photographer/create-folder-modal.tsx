@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
+import { CreateClientModal } from "@/components/photographer/create-client-modal";
 import {
   AlignLeft,
   CalendarDays,
   Clock,
   FolderPlus,
   ImagePlus,
+  UserPlus,
   UserRound,
   X,
 } from "lucide-react";
@@ -53,6 +55,7 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     FALLBACK_SHARE_EXPIRY_PRESETS,
   );
   const [busy, setBusy] = useState(false);
+  const [addClientOpen, setAddClientOpen] = useState(false);
   const [coverFocalX, setCoverFocalX] = useState(50);
   const [coverFocalY, setCoverFocalY] = useState(50);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -118,6 +121,10 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
   }, [open, showToast]);
 
   useEffect(() => {
+    if (!open) setAddClientOpen(false);
+  }, [open]);
+
+  useEffect(() => {
     if (!coverFile) return;
     const url = URL.createObjectURL(coverFile);
     setCoverPreview(url);
@@ -137,6 +144,16 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
       ),
     [coverPreview, coverFile, isEdit, folder],
   );
+
+  function handleNewClientSaved(saved: ApiClient) {
+    setClients((prev) => {
+      if (prev.some((c) => c._id === saved._id)) {
+        return prev.map((c) => (c._id === saved._id ? saved : c));
+      }
+      return [...prev, saved];
+    });
+    setClientId(saved._id);
+  }
 
   if (!open) return null;
 
@@ -241,7 +258,8 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
     "text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-y-contain p-4 py-6 sm:py-8">
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-y-contain p-4 py-6 sm:py-8">
       <button
         type="button"
         className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
@@ -278,9 +296,20 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
             </p>
             {!isEdit ? (
               <label className="block">
-                <span className={`inline-flex items-center gap-1.5 ${labelClass}`}>
-                  <UserRound className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                  Client
+                <span className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className={`inline-flex items-center gap-1.5 ${labelClass}`}>
+                    <UserRound className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                    Client
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAddClientOpen(true)}
+                    disabled={busy || clientsLoading}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <UserPlus className="h-3.5 w-3.5 shrink-0 text-brand dark:text-brand-on-dark" aria-hidden />
+                    Add client
+                  </button>
                 </span>
                 <select className={inputClass} value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={busy || clientsLoading}>
                   <option value="" disabled>
@@ -470,5 +499,11 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
         </div>
       </div>
     </div>
+      <CreateClientModal
+        open={addClientOpen}
+        onClose={() => setAddClientOpen(false)}
+        onSaved={handleNewClientSaved}
+      />
+    </>
   );
 }
