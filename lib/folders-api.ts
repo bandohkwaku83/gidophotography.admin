@@ -804,6 +804,35 @@ export async function uploadFolderFinalMedia(
   return { lastBody, ignoredDuplicatesCount };
 }
 
+/** Admin: lock client final delivery / previews until payment (`PATCH …/final-delivery/lock`). */
+export async function lockFolderFinalDelivery(
+  folderId: string,
+  input: { outstandingAmountGHS: number },
+): Promise<ApiFolder> {
+  const amount = input.outstandingAmountGHS;
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new FoldersApiError("Outstanding amount must be a non-negative number.", 400, null);
+  }
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/final-delivery/lock`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outstandingAmountGHS: amount }),
+    },
+  );
+  const body = await parseJson(res);
+  console.log("[folders:final-delivery:lock]", { status: res.status, ok: res.ok, body });
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Could not lock final delivery (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  return unwrapFolder(body);
+}
+
 /** Admin: unlock client final delivery after payment confirmed (`PATCH …/final-delivery/unlock`). */
 export async function unlockFolderFinalDelivery(folderId: string): Promise<ApiFolder> {
   const res = await authedFetch(

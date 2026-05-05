@@ -12,6 +12,7 @@ import {
   submitShareGallerySelectionsToPhotographer,
   syncShareGallerySelections,
   type ShareGalleryAsset,
+  type ShareGalleryFinal,
 } from "@/lib/share-gallery-api";
 import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
@@ -176,7 +177,13 @@ function toDemoAssets(shareAssets: ShareGalleryAsset[]): DemoAsset[] {
     clientComment: "",
     hasEdited: false,
     thumbUrl: a.thumbUrl,
+    ...(a.previewUrl ? { previewUrl: a.previewUrl } : {}),
   }));
+}
+
+function finalDisplaySrc(f: ShareGalleryFinal, shareToken: string): string {
+  const locked = Boolean(f.locked);
+  return locked ? f.lockedPreviewUrl || getShareFinalLockedPreviewUrl(shareToken, f.id) : f.url;
 }
 
 export function ClientGalleryApp({ token }: { token: string }) {
@@ -187,6 +194,8 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [finalLightboxId, setFinalLightboxId] = useState<string | null>(null);
+  const [coverLightboxOpen, setCoverLightboxOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [photoTab, setPhotoTab] = useState<"all" | "selected" | "edited">("all");
   const [zoom, setZoom] = useState(1);
@@ -362,7 +371,30 @@ export function ClientGalleryApp({ token }: { token: string }) {
   }, [lightboxId, lightboxNavAssets]);
 
   const openLb = useCallback((id: string) => {
+    setFinalLightboxId(null);
+    setCoverLightboxOpen(false);
     setLightboxId(id);
+    setZoom(1);
+  }, []);
+
+  const openFinalLb = useCallback((id: string) => {
+    setLightboxId(null);
+    setCoverLightboxOpen(false);
+    setFinalLightboxId(id);
+    setZoom(1);
+  }, []);
+
+  const openCoverLb = useCallback(() => {
+    setLightboxId(null);
+    setFinalLightboxId(null);
+    setCoverLightboxOpen(true);
+    setZoom(1);
+  }, []);
+
+  const closeAllPreviews = useCallback(() => {
+    setLightboxId(null);
+    setFinalLightboxId(null);
+    setCoverLightboxOpen(false);
     setZoom(1);
   }, []);
 
@@ -424,6 +456,36 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const lbNavIndex = lbAsset
     ? lightboxNavAssets.findIndex((a) => a.id === lbAsset.id)
     : -1;
+
+  const finalLb =
+    gallery && finalLightboxId
+      ? gallery.finals.find((f) => f.id === finalLightboxId) ?? null
+      : null;
+  const finalLbIndex =
+    finalLb && gallery ? gallery.finals.findIndex((f) => f.id === finalLb.id) : -1;
+
+  useEffect(() => {
+    if (photoTab !== "edited") setFinalLightboxId(null);
+  }, [photoTab]);
+
+  useEffect(() => {
+    if (
+      finalLightboxId &&
+      gallery &&
+      !gallery.finals.some((f) => f.id === finalLightboxId)
+    ) {
+      setFinalLightboxId(null);
+    }
+  }, [finalLightboxId, gallery]);
+
+  useEffect(() => {
+    if (!lightboxId && !finalLightboxId && !coverLightboxOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeAllPreviews();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxId, finalLightboxId, coverLightboxOpen, closeAllPreviews]);
 
   const displayTitle = gallery?.eventName?.trim() || "Select your favorites";
 
@@ -516,6 +578,12 @@ export function ClientGalleryApp({ token }: { token: string }) {
             <div
               className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/60 via-black/30 to-black/[0.88]"
               aria-hidden
+            />
+            <button
+              type="button"
+              onClick={() => openCoverLb()}
+              className="absolute inset-0 z-[5] cursor-zoom-in bg-transparent p-0"
+              aria-label="View cover image full screen"
             />
 
             <div className="relative z-10 border-b border-white/15 bg-black/30 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8">
@@ -842,25 +910,30 @@ export function ClientGalleryApp({ token }: { token: string }) {
             <ul className={galleryListClass(gridLayout)}>
               {gallery.finals.map((f, index) => {
                 const locked = Boolean(f.locked);
-                const imgSrc = locked
-                  ? f.lockedPreviewUrl || getShareFinalLockedPreviewUrl(token, f.id)
-                  : f.url;
+                const imgSrc = finalDisplaySrc(f, token);
                 return (
                   <li key={f.id} className={`flex flex-col ${editedCardClass(gridLayout, index)}`}>
                     <div className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={imgSrc}
-                        alt={f.name}
-                        className={cn(
-                          editedImageClass(gridLayout, index),
-                          locked && "select-none",
-                        )}
-                        draggable={!locked}
-                        onContextMenu={(e) => {
-                          if (locked) e.preventDefault();
-                        }}
-                      />
+                      <button
+                        type="button"
+                        onClick={() => openFinalLb(f.id)}
+                        className="block w-full border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 dark:focus-visible:ring-brand-on-dark"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imgSrc}
+                          alt={f.name}
+                          className={cn(
+                            editedImageClass(gridLayout, index),
+                            "cursor-zoom-in",
+                            locked && "select-none",
+                          )}
+                          draggable={!locked}
+                          onContextMenu={(e) => {
+                            if (locked) e.preventDefault();
+                          }}
+                        />
+                      </button>
                       {locked ? (
                         <div
                           className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/25 to-transparent"
@@ -956,7 +1029,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
             type="button"
             className="absolute inset-0 cursor-default"
             aria-label="Close"
-            onClick={() => setLightboxId(null)}
+            onClick={() => closeAllPreviews()}
           />
           <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
             <div className="flex justify-end gap-2">
@@ -976,7 +1049,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
               </button>
               <button
                 type="button"
-                onClick={() => setLightboxId(null)}
+                onClick={() => closeAllPreviews()}
                 className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
               >
                 Close
@@ -985,10 +1058,16 @@ export function ClientGalleryApp({ token }: { token: string }) {
             <div className="flex flex-1 items-center justify-center overflow-auto">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={lbAsset.thumbUrl}
+                src={lbAsset.previewUrl ?? lbAsset.thumbUrl}
                 alt={lbAsset.originalName}
-                className="max-h-[75vh] max-w-full object-contain transition-transform duration-200"
+                className={cn(
+                  "max-h-[75vh] max-w-full object-contain transition-transform duration-200",
+                  gallery.rightsProtection && "select-none",
+                )}
                 style={{ transform: `scale(${zoom})` }}
+                onContextMenu={(e) => {
+                  if (gallery.rightsProtection) e.preventDefault();
+                }}
               />
             </div>
             <div className="flex items-center justify-between gap-4 text-white">
@@ -1032,6 +1111,179 @@ export function ClientGalleryApp({ token }: { token: string }) {
               >
                 Next →
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {finalLb ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Preview — ${finalLb.name}`}
+        >
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close"
+            onClick={() => closeAllPreviews()}
+          />
+          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.min(2.5, z + 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom +
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom −
+              </button>
+              <button
+                type="button"
+                onClick={() => closeAllPreviews()}
+                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex flex-1 items-center justify-center overflow-auto">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={finalDisplaySrc(finalLb, token)}
+                alt={finalLb.name}
+                className={cn(
+                  "max-h-[75vh] max-w-full object-contain transition-transform duration-200",
+                  gallery.rightsProtection && "select-none",
+                  finalLb.locked && "select-none",
+                )}
+                style={{ transform: `scale(${zoom})` }}
+                draggable={!finalLb.locked}
+                onContextMenu={(e) => {
+                  if (finalLb.locked || gallery.rightsProtection) e.preventDefault();
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-3 text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <button
+                type="button"
+                disabled={finalLbIndex <= 0}
+                onClick={() => {
+                  const prev = gallery.finals[finalLbIndex - 1];
+                  if (prev) {
+                    setFinalLightboxId(prev.id);
+                    setZoom(1);
+                  }
+                }}
+                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
+              >
+                ← Previous
+              </button>
+              <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-1 text-center">
+                <span className="max-w-full truncate text-xs font-medium">{finalLb.name}</span>
+                {finalLb.locked ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-200">
+                    <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Preview only until paid
+                  </span>
+                ) : (
+                  <a
+                    href={getShareFinalDownloadUrl(token, finalLb.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900"
+                  >
+                    <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Download
+                  </a>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={finalLbIndex < 0 || finalLbIndex >= gallery.finals.length - 1}
+                onClick={() => {
+                  const next = gallery.finals[finalLbIndex + 1];
+                  if (next) {
+                    setFinalLightboxId(next.id);
+                    setZoom(1);
+                  }
+                }}
+                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {coverLightboxOpen && gallery.coverImageUrl ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Cover preview"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close"
+            onClick={() => closeAllPreviews()}
+          />
+          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.min(2.5, z + 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom +
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Zoom −
+              </button>
+              <button
+                type="button"
+                onClick={() => closeAllPreviews()}
+                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex flex-1 items-center justify-center overflow-auto">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={gallery.coverImageUrl}
+                alt={displayTitle ? `Cover — ${displayTitle}` : "Gallery cover"}
+                className={cn(
+                  "max-h-[75vh] max-w-full object-contain object-center transition-transform duration-200",
+                  gallery.rightsProtection && "select-none",
+                )}
+                style={{
+                  transform: `scale(${zoom})`,
+                  ...folderCoverObjectPositionStyle({
+                    _id: gallery.folderId ?? "",
+                    client: "",
+                    eventDate: "",
+                    description: "",
+                    coverFocalX: gallery.coverFocalX,
+                    coverFocalY: gallery.coverFocalY,
+                  } as ApiFolder),
+                }}
+                onContextMenu={(e) => {
+                  if (gallery.rightsProtection) e.preventDefault();
+                }}
+              />
             </div>
           </div>
         </div>

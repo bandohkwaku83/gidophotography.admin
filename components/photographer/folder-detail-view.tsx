@@ -50,6 +50,7 @@ import {
   folderCoverObjectPositionStyle,
   FALLBACK_SHARE_EXPIRY_PRESETS,
   FoldersApiError,
+  folderFinalsPaymentLocked,
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
   parseFolderCoverFocal,
@@ -61,6 +62,7 @@ import {
   deleteFolderRawMedia,
   postFolderMediaDuplicatePreview,
   regenerateFolderShare,
+  lockFolderFinalDelivery,
   unlockFolderFinalDelivery,
   updateFolder,
   uploadFolderBackgroundMusic,
@@ -221,6 +223,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [finalWizardBalance, setFinalWizardBalance] = useState("");
   const [finalWizardLock, setFinalWizardLock] = useState(false);
   const [unlockingFinals, setUnlockingFinals] = useState(false);
+  const [lockFinalDeliveryOpen, setLockFinalDeliveryOpen] = useState(false);
+  const [lockFinalDeliveryAmount, setLockFinalDeliveryAmount] = useState("");
+  const [lockingFinalDelivery, setLockingFinalDelivery] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
@@ -293,6 +298,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const finalAssets = useMemo(
     () => (folder ? extractFinalMediaList(folder).map(apiFolderMediaToFinal) : []),
     [folder],
+  );
+
+  const finalsPaymentLocked = useMemo(
+    () => (folder ? folderFinalsPaymentLocked(folder) : false),
+    [folder],
+  );
+  const showUnlockFinalDelivery = useMemo(
+    () =>
+      finalAssets.length > 0 &&
+      (finalsPaymentLocked || finalAssets.some((f) => f.locked)),
+    [finalAssets, finalsPaymentLocked],
+  );
+  const showLockFinalDelivery = useMemo(
+    () => finalAssets.length > 0 && !finalsPaymentLocked,
+    [finalAssets, finalsPaymentLocked],
   );
 
   const selectionRows = useMemo(
@@ -484,7 +504,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   }
 
   async function onUnlockFinalDelivery() {
-    if (!folder || unlockingFinals || busy) return;
+    if (!folder || unlockingFinals || busy || lockingFinalDelivery) return;
     setUnlockingFinals(true);
     try {
       await unlockFolderFinalDelivery(folder._id);
@@ -494,6 +514,32 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       showToast(e instanceof Error ? e.message : "Could not unlock finals.", "error");
     } finally {
       setUnlockingFinals(false);
+    }
+  }
+
+  async function onLockFinalDelivery() {
+    if (!folder || lockingFinalDelivery || busy || unlockingFinals) return;
+    const raw = lockFinalDeliveryAmount.trim().replace(/,/g, "");
+    if (!raw || Number.isNaN(Number(raw))) {
+      showToast("Enter a valid outstanding amount in GHS.", "error");
+      return;
+    }
+    const n = Number(raw);
+    if (n < 0) {
+      showToast("Amount cannot be negative.", "error");
+      return;
+    }
+    setLockingFinalDelivery(true);
+    try {
+      await lockFolderFinalDelivery(folder._id, { outstandingAmountGHS: n });
+      await refreshFolder();
+      setLockFinalDeliveryOpen(false);
+      setLockFinalDeliveryAmount("");
+      showToast("Final delivery locked — client sees locked previews until paid.", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Could not lock finals.", "error");
+    } finally {
+      setLockingFinalDelivery(false);
     }
   }
 
@@ -1663,21 +1709,41 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   Upload finished edits for client delivery.
                 </p>
                 {finalAssets.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => void onUnlockFinalDelivery()}
-                    disabled={unlockingFinals || busy || mediaDeleteBlocked()}
-                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
-                  >
-                    {unlockingFinals ? (
-                      <InlineActionSkeleton />
-                    ) : (
-                      <>
-                        <Unlock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        Unlock client downloads
-                      </>
-                    )}
-                  </button>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {showLockFinalDelivery ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLockFinalDeliveryAmount("");
+                          setLockFinalDeliveryOpen(true);
+                        }}
+                        disabled={lockingFinalDelivery || unlockingFinals || busy || mediaDeleteBlocked()}
+                        className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                      >
+                        <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        Lock for payment
+                      </button>
+                    ) : null}
+                    {showUnlockFinalDelivery ? (
+                      <button
+                        type="button"
+                        onClick={() => void onUnlockFinalDelivery()}
+                        disabled={
+                          unlockingFinals || lockingFinalDelivery || busy || mediaDeleteBlocked()
+                        }
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
+                      >
+                        {unlockingFinals ? (
+                          <InlineActionSkeleton />
+                        ) : (
+                          <>
+                            <Unlock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            Unlock client downloads
+                          </>
+                        )}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               {finalAssets.length > 0 ? (
@@ -1808,6 +1874,59 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           </div>
         ) : null}
       </div>
+
+      {lockFinalDeliveryOpen ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lock-final-delivery-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
+            <h2
+              id="lock-final-delivery-title"
+              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              Lock final delivery
+            </h2>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Preview-only for the client until this balance is paid.
+            </p>
+            <label className="mt-4 block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Outstanding amount (GHS)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={lockFinalDeliveryAmount}
+                onChange={(e) => setLockFinalDeliveryAmount(e.target.value)}
+                placeholder="e.g. 500"
+                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand/25 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900"
+              />
+            </label>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                disabled={lockingFinalDelivery}
+                onClick={() => {
+                  setLockFinalDeliveryOpen(false);
+                  setLockFinalDeliveryAmount("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={lockingFinalDelivery}
+                className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover disabled:opacity-50"
+                onClick={() => void onLockFinalDelivery()}
+              >
+                {lockingFinalDelivery ? "Locking…" : "Lock previews"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {finalWizardOpen ? (
         <div

@@ -5,6 +5,8 @@ export type ShareGalleryAsset = {
   id: string;
   originalName: string;
   thumbUrl: string;
+  /** Larger / display-quality URL for full-screen preview when distinct from {@link thumbUrl}. */
+  previewUrl?: string;
   selection: "SELECTED" | "UNSELECTED";
 };
 
@@ -120,15 +122,25 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
     str(o.name) ||
     str(o.fileName) ||
     `Photo ${idx + 1}`;
-  const thumbRaw =
+  const smallThumb =
     str(o.thumbUrl) ||
     str(o.thumbnail) ||
+    str(o.thumb) ||
+    "";
+  const largePreview =
+    str(o.displayUrl) ||
     str(o.url) ||
     str(o.previewUrl) ||
     str(o.image) ||
-    str(o.src);
+    str(o.src) ||
+    "";
+  const thumbRaw = smallThumb || largePreview;
   const thumbUrl = resolvePublicGalleryImageUrl(thumbRaw);
   if (!thumbUrl) return null;
+
+  const largeResolved = largePreview ? resolvePublicGalleryImageUrl(largePreview) : "";
+  const previewUrl =
+    largeResolved && largeResolved !== thumbUrl ? largeResolved : undefined;
 
   const sel = str(o.selection).toUpperCase();
   const selected =
@@ -140,6 +152,7 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
     id,
     originalName,
     thumbUrl,
+    ...(previewUrl ? { previewUrl } : {}),
     selection: selected ? "SELECTED" : "UNSELECTED",
   };
 }

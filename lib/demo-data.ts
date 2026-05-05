@@ -10,6 +10,8 @@ export type DemoAsset = {
   clientComment: string;
   hasEdited: boolean;
   thumbUrl: string;
+  /** Full-screen preview URL when better than {@link thumbUrl} (share galleries / API). */
+  previewUrl?: string;
   editedPreviewUrl?: string;
 };
 
