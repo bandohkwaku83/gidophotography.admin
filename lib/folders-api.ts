@@ -589,7 +589,11 @@ export async function patchFolderShare(
 /** Optional FormData fields for folder raw/final uploads (`duplicateAction`, `uploadComplete`). */
 export type UploadFolderMediaFormOptions = {
   duplicateAction?: DuplicateUploadAction;
-  /** Append `uploadComplete=true` on the last file only (e.g. SMS / batch hooks). */
+  /**
+   * When true, each HTTP upload sends explicit `uploadComplete`: `false` on all but the last
+   * file in this run, `true` on the last—so upload SMS (raw/final) schedules once per gallery batch.
+   * When false/omitted, the field is not sent (legacy; server may debounce or require explicit complete via env).
+   */
   markUploadComplete?: boolean;
 };
 
@@ -702,8 +706,11 @@ function appendFolderUploadFormFields(
   if (opts?.duplicateAction) {
     fd.append("duplicateAction", opts.duplicateAction);
   }
-  if (opts?.markUploadComplete && fileIndex === fileCount - 1) {
+  if (!opts?.markUploadComplete || fileCount <= 0) return;
+  if (fileIndex === fileCount - 1) {
     fd.append("uploadComplete", "true");
+  } else {
+    fd.append("uploadComplete", "false");
   }
 }
 

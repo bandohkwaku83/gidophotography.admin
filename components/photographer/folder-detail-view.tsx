@@ -134,14 +134,21 @@ function statusStyles(s: FolderStatus) {
 
 function UploadProgressBanner({
   kind,
+  phase,
   computable,
   percent,
 }: {
   kind: "raw" | "final";
+  phase: "preparing" | "uploading";
   computable: boolean;
   percent: number;
 }) {
-  const label = kind === "raw" ? "Uploading raw photos…" : "Uploading finals…";
+  const label =
+    phase === "preparing"
+      ? "Preparing upload…"
+      : kind === "raw"
+        ? "Uploading raw photos…"
+        : "Uploading finals…";
   return (
     <div
       role="status"
@@ -153,7 +160,11 @@ function UploadProgressBanner({
           <InlineStatusSkeleton size={16} />
           <span className="truncate">{label}</span>
         </div>
-        {computable ? (
+        {phase === "preparing" ? (
+          <span className="shrink-0 text-xs font-medium text-brand-ink/85 dark:text-brand-on-dark/90">
+            Checking…
+          </span>
+        ) : computable ? (
           <span className="shrink-0 tabular-nums text-sm font-semibold text-brand-ink dark:text-brand-on-dark">
             {percent}%
           </span>
@@ -188,6 +199,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     kind: "raw" | "final";
+    phase: "preparing" | "uploading";
     computable: boolean;
     percent: number;
   } | null>(null);
@@ -421,11 +433,19 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const uploadProgressHandler = useCallback(
     (kind: "raw" | "final") =>
       (loaded: number, total: number, lengthComputable: boolean) => {
-        const computable = lengthComputable && total > 0;
+        const canCompute = lengthComputable && total > 0;
+        /** Until at least one byte is reported, keep indeterminate — avoids an empty 0% bar. */
+        const showDeterminate = canCompute && loaded > 0;
+        const rounded = canCompute
+          ? Math.min(100, Math.round((100 * loaded) / total))
+          : 0;
+        const percent =
+          showDeterminate && rounded < 1 ? 1 : showDeterminate ? rounded : 0;
         setUploadProgress({
           kind,
-          computable,
-          percent: computable ? Math.min(100, Math.round((100 * loaded) / total)) : 0,
+          phase: "uploading",
+          computable: showDeterminate,
+          percent,
         });
       },
     [],
@@ -456,6 +476,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (!folder || files.length === 0) return;
     pendingFinalDeliveryRef.current = delivery;
     setBusy(true);
+    setUploadProgress({ kind: "final", phase: "preparing", computable: false, percent: 0 });
     let awaitingConflictChoice = false;
     const selectionMediaId: string | undefined = undefined;
     try {
@@ -469,7 +490,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         return;
       }
 
-      setUploadProgress({ kind: "final", computable: false, percent: 0 });
+      setUploadProgress({ kind: "final", phase: "uploading", computable: false, percent: 0 });
       await uploadFolderFinalMedia(
         folder._id,
         files,
@@ -537,6 +558,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   async function onRawUpload(files: File[]) {
     if (!folder || busy || files.length === 0) return;
     setBusy(true);
+    setUploadProgress({ kind: "raw", phase: "preparing", computable: false, percent: 0 });
     let awaitingConflictChoice = false;
     try {
       const { hasConflicts } = await postFolderMediaDuplicatePreview(folder._id, {
@@ -549,7 +571,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         return;
       }
 
-      setUploadProgress({ kind: "raw", computable: false, percent: 0 });
+      setUploadProgress({ kind: "raw", phase: "uploading", computable: false, percent: 0 });
       await uploadFolderRawMedia(
         folder._id,
         files,
@@ -571,7 +593,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (!folder || !p) return;
     setDuplicateFilenamePrompt(null);
     setBusy(true);
-    setUploadProgress({ kind: p.kind, computable: false, percent: 0 });
+    setUploadProgress({ kind: p.kind, phase: "uploading", computable: false, percent: 0 });
     try {
       if (p.kind === "raw") {
         await uploadFolderRawMedia(
@@ -609,7 +631,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (!folder || !p) return;
     setDuplicateFilenamePrompt(null);
     setBusy(true);
-    setUploadProgress({ kind: p.kind, computable: false, percent: 0 });
+    setUploadProgress({ kind: p.kind, phase: "uploading", computable: false, percent: 0 });
     try {
       let ignored = 0;
       if (p.kind === "raw") {
@@ -1487,6 +1509,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           <div className="mb-6">
             <UploadProgressBanner
               kind={uploadProgress.kind}
+              phase={uploadProgress.phase}
               computable={uploadProgress.computable}
               percent={uploadProgress.percent}
             />
