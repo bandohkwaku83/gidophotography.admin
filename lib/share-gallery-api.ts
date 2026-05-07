@@ -90,6 +90,51 @@ function bool(v: unknown, defaultVal = false): boolean {
   return typeof v === "boolean" ? v : defaultVal;
 }
 
+/** Pick a URL string from a flat field or a nested `{ url | src | href | coverImageUrl }` object (API variance). */
+function firstNonEmptyCoverRef(...parts: unknown[]): string {
+  for (const p of parts) {
+    if (p == null) continue;
+    if (typeof p === "string") {
+      const t = p.trim();
+      if (t) return t;
+      continue;
+    }
+    if (typeof p === "object" && !Array.isArray(p)) {
+      const o = p as Raw;
+      const inner =
+        str(o.url) ||
+        str(o.href) ||
+        str(o.src) ||
+        str(o.coverImageUrl) ||
+        str(o.coverImage);
+      if (inner) return inner;
+    }
+  }
+  return "";
+}
+
+/** Embedded settings blobs that may carry `defaultCoverImageUrl` when the folder uses the studio default. */
+function forEachSettingsBlob(
+  root: Raw,
+  folder: Raw | null,
+  nested: Raw | null,
+  visit: (o: Raw) => void,
+): void {
+  const candidates: unknown[] = [
+    root.settings,
+    root.photographerSettings,
+    root.studioSettings,
+    root.studio,
+    folder?.settings,
+    folder?.photographerSettings,
+    nested?.settings,
+    nested?.photographerSettings,
+  ];
+  for (const b of candidates) {
+    if (b && typeof b === "object" && !Array.isArray(b)) visit(b as Raw);
+  }
+}
+
 /** Share flag: explicit false / 0 / "false" / "no" → off; otherwise on (matches folder update accepted values). */
 function shareTruthyOn(v: unknown): boolean {
   if (v === false || v === 0 || v === "0" || v === "false" || v === "no" || v === "NO") {
@@ -358,18 +403,50 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     counts = undefined;
   }
 
-  const coverRaw =
-    str(folder?.coverImageUrl) ||
-    str(folder?.coverImage) ||
-    str((folder as Raw)?.cover_image_url) ||
-    str((folder as Raw)?.cover_image) ||
-    str(root.coverImageUrl) ||
-    str(root.coverImage) ||
-    str((root as Raw).cover_image_url) ||
-    str((root as Raw).cover_image) ||
-    (nested && typeof nested === "object"
-      ? str((nested as Raw).coverImageUrl) || str((nested as Raw).coverImage)
-      : "");
+  let coverRaw = firstNonEmptyCoverRef(
+    folder?.coverImageUrl,
+    folder?.coverImage,
+    (folder as Raw)?.cover_image_url,
+    (folder as Raw)?.cover_image,
+    (folder as Raw)?.cover,
+    (folder as Raw)?.effectiveCoverUrl,
+    (folder as Raw)?.effective_cover_url,
+    (folder as Raw)?.resolvedCoverUrl,
+    (folder as Raw)?.resolved_cover_url,
+    (folder as Raw)?.heroImageUrl,
+    (folder as Raw)?.hero_image_url,
+    nested && typeof nested === "object" ? (nested as Raw).coverImageUrl : null,
+    nested && typeof nested === "object" ? (nested as Raw).coverImage : null,
+    nested && typeof nested === "object" ? (nested as Raw).cover : null,
+    root.coverImageUrl,
+    root.coverImage,
+    (root as Raw).cover_image_url,
+    (root as Raw).cover_image,
+    (root as Raw).cover,
+  );
+
+  if (!coverRaw) {
+    forEachSettingsBlob(root, folder, nested, (o) => {
+      if (coverRaw) return;
+      coverRaw = firstNonEmptyCoverRef(
+        o.defaultCoverImageUrl,
+        o.defaultCoverImage,
+        o.default_cover_image_url,
+        o.default_cover_image,
+      );
+    });
+  }
+
+  if (!coverRaw && folder) {
+    const o = folder as Raw;
+    coverRaw = firstNonEmptyCoverRef(
+      o.defaultCoverImageUrl,
+      o.defaultCoverImage,
+      o.default_cover_image_url,
+      o.default_cover_image,
+    );
+  }
+
   const coverImageUrl = coverRaw ? resolvePublicGalleryImageUrl(coverRaw) : undefined;
 
   /** Focal may live on `folder`, on the response root, or only on root when folder is shaped oddly. */
