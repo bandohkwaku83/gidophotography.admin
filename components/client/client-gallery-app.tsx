@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
 import {
-  getShareFinalSaveHref,
+  deliverFinalPhotoToMobile,
+  getShareFinalDownloadUrl,
   getShareFinalLockedPreviewUrl,
   getShareGallery,
   downloadShareFinalsZip,
@@ -204,8 +205,11 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [zoom, setZoom] = useState(1);
   const [gridLayout, setGridLayout] = useState<GridLayout>("spotlight");
   const [downloadAllFinalsBusy, setDownloadAllFinalsBusy] = useState(false);
+  const [finalSaveBusyId, setFinalSaveBusyId] = useState<string | null>(null);
 
   const preferInlineFinalSave = usePreferInlineFinalSave();
+  /** Single-flight guard for Save on touch devices (`deliverFinalPhotoToMobile`). */
+  const finalDeliverLock = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [galleryMusicStarted, setGalleryMusicStarted] = useState(false);
@@ -408,6 +412,30 @@ export function ClientGalleryApp({ token }: { token: string }) {
     setCoverLightboxOpen(false);
     setZoom(1);
   }, []);
+
+  const handleDeliverFinalPhotoMobile = useCallback(
+    async (f: ShareGalleryFinal) => {
+      if (downloadAllFinalsBusy || finalDeliverLock.current) return;
+      finalDeliverLock.current = true;
+      const id = f.id;
+      setFinalSaveBusyId(id);
+      try {
+        await deliverFinalPhotoToMobile(token, f);
+      } catch (e) {
+        const msg =
+          e instanceof ShareGalleryError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : "Could not save this photo.";
+        showToast(msg, "error");
+      } finally {
+        finalDeliverLock.current = false;
+        setFinalSaveBusyId((cur) => (cur === id ? null : cur));
+      }
+    },
+    [token, showToast, downloadAllFinalsBusy],
+  );
 
   async function refetchGallery() {
     const g = await getShareGallery(token);
@@ -1002,22 +1030,31 @@ export function ClientGalleryApp({ token }: { token: string }) {
                           <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
                           Locked
                         </span>
+                      ) : preferInlineFinalSave ? (
+                        <button
+                          type="button"
+                          title="Save to Photos / Gallery via the Share sheet when available"
+                          disabled={finalSaveBusyId !== null}
+                          aria-busy={finalSaveBusyId === f.id}
+                          onClick={() => void handleDeliverFinalPhotoMobile(f)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white enabled:hover:opacity-90 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                        >
+                          {finalSaveBusyId === f.id ? (
+                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                          ) : (
+                            <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          )}
+                          Save
+                        </button>
                       ) : (
                         <a
-                          href={getShareFinalSaveHref(token, f, {
-                            preferInlineImageViewer: preferInlineFinalSave,
-                          })}
+                          href={getShareFinalDownloadUrl(token, f.id)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          title={
-                            preferInlineFinalSave
-                              ? "Opens the full image — use Share, then Save Image, to add it to Photos"
-                              : undefined
-                          }
                           className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"
                         >
-                          <Download className="h-3.5 w-3.5" aria-hidden />
-                          {preferInlineFinalSave ? "Save" : "Download"}
+                          <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          Download
                         </a>
                       )}
                     </div>
@@ -1252,22 +1289,31 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     Preview only until paid
                   </span>
+                ) : preferInlineFinalSave ? (
+                  <button
+                    type="button"
+                    title="Save to Photos / Gallery via the Share sheet when available"
+                    disabled={finalSaveBusyId !== null}
+                    aria-busy={finalSaveBusyId === finalLb.id}
+                    onClick={() => void handleDeliverFinalPhotoMobile(finalLb)}
+                    className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900 enabled:hover:bg-white/90 disabled:opacity-50"
+                  >
+                    {finalSaveBusyId === finalLb.id ? (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    )}
+                    Save
+                  </button>
                 ) : (
                   <a
-                    href={getShareFinalSaveHref(token, finalLb, {
-                      preferInlineImageViewer: preferInlineFinalSave,
-                    })}
+                    href={getShareFinalDownloadUrl(token, finalLb.id)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    title={
-                      preferInlineFinalSave
-                        ? "Opens the full image — use Share, then Save Image, to add it to Photos"
-                        : undefined
-                    }
                     className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900"
                   >
                     <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    {preferInlineFinalSave ? "Save" : "Download"}
+                    Download
                   </a>
                 )}
               </div>

@@ -678,6 +678,109 @@ export function getShareFinalSaveHref(
   return getShareFinalDownloadUrl(shareToken, f.id);
 }
 
+/** Safe filename (+ extension guess) for a single final (`File` / share sheet). */
+function finalizeShareFinalFilename(displayName: string, mimeOrEmpty: string): string {
+  const raw = displayName.trim() || "photo";
+  const safe = raw.replace(/[/\\?*:|"<>]/g, "_").replace(/\s+/g, " ").trim() || "photo";
+  if (/\.[a-z0-9]{2,10}$/i.test(safe)) return safe;
+  const m = mimeOrEmpty.toLowerCase();
+  let ext = ".jpg";
+  if (m.includes("png")) ext = ".png";
+  else if (m.includes("webp")) ext = ".webp";
+  else if (m.includes("gif")) ext = ".gif";
+  else if (m.includes("heic") || m.includes("heif")) ext = ".heic";
+  return `${safe}${ext}`;
+}
+
+/** Public download endpoint — same-origin so `fetch` + Web Share succeed in the gallery app. */
+async function fetchShareFinalDownloadBlob(
+  shareToken: string,
+  f: ShareGalleryFinal,
+): Promise<Blob> {
+  const res = await fetch(getShareFinalDownloadUrl(shareToken, f.id));
+  const body = res.ok ? null : await parseJson(res);
+  if (!res.ok) {
+    throw new ShareGalleryError(
+      extractMessage(body, `Could not download “${f.name}” (${res.status}).`),
+      res.status,
+      body,
+    );
+  }
+  return res.blob();
+}
+
+async function webSharePhotoFile(blob: Blob, displayName: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.share) return false;
+
+  const mime =
+    blob.type?.trim() || "image/jpeg";
+  const fname = finalizeShareFinalFilename(displayName, mime);
+
+  try {
+    const file = new File([blob], fname, { type: mime });
+    const payload: ShareData & { files: File[] } = {
+      files: [file],
+      title: fname,
+    };
+    if (typeof navigator.canShare === "function" && !navigator.canShare(payload)) {
+      return false;
+    }
+    // If `canShare` is missing (older WebKit), attempt `share({ files })` anyway.
+    await navigator.share(payload);
+    return true;
+  } catch (e) {
+    const aborted =
+      e instanceof DOMException ? e.name === "AbortError" : (e as { name?: string })?.name === "AbortError";
+    // User dismissed share sheet counts as handled.
+    if (aborted) return true;
+    return false;
+  }
+}
+
+/** Opens a temporary object URL in a new tab so the user can use the browser Share / Save menu. */
+function openPhotoBlobInNewTab(blob: Blob): boolean {
+  if (typeof window === "undefined") return false;
+  const u = URL.createObjectURL(blob);
+  const w = window.open(u, "_blank", "noopener,noreferrer");
+  if (!w) {
+    URL.revokeObjectURL(u);
+    return false;
+  }
+  window.setTimeout(() => URL.revokeObjectURL(u), 120_000);
+  return true;
+}
+
+/**
+ * Phones/tablets: prefer native share (“Save Image”, Photos). Otherwise open a blob-backed tab or CDN URL.
+ * Desktop/coarse callers should bypass and use `<a href={download}>` unless they’re sure.
+ */
+export async function deliverFinalPhotoToMobile(
+  shareToken: string,
+  f: ShareGalleryFinal,
+): Promise<"share" | "blob_tab" | "remote_tab"> {
+  if (typeof window === "undefined") {
+    throw new ShareGalleryError("Save is only available in the browser.", 400, null);
+  }
+  const blob = await fetchShareFinalDownloadBlob(shareToken, f);
+
+  const shared = await webSharePhotoFile(blob, f.name || `final-${f.id}`);
+  if (shared) return "share";
+
+  if (openPhotoBlobInNewTab(blob)) return "blob_tab";
+
+  const remote = f.url?.trim()
+    ? f.url.trim()
+    : getShareFinalDownloadUrl(shareToken, f.id);
+  const w = window.open(remote, "_blank", "noopener,noreferrer");
+  if (w) return "remote_tab";
+
+  throw new ShareGalleryError(
+    "This browser blocked the save window. Allow pop‑ups for this gallery, tap Save again, or long‑press the photo preview and choose “Save”.",
+    400,
+    null,
+  );
+}
+
 export type ShareFinalZipEntry = { id: string; name: string };
 
 function safeZipEntryName(original: string, used: Map<string, number>): string {

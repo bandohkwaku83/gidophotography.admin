@@ -86,15 +86,6 @@ export function ClientGalleryPageSkeleton() {
   );
 }
 
-/** Clients table area (initial / empty fetch). */
-export function ClientsTableSkeleton() {
-  return (
-    <div className={cn("overflow-hidden rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950", darkSkeleton)}>
-      <Skeleton active title={{ width: "28%" }} paragraph={{ rows: 10, width: ["100%", "100%", "100%", "100%", "100%", "100%", "100%", "100%", "100%", "72%"] }} />
-    </div>
-  );
-}
-
 /** Settings workflow block. */
 export function SettingsWorkflowSkeleton() {
   return (
