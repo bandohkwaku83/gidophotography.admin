@@ -692,8 +692,8 @@ function finalizeShareFinalFilename(displayName: string, mimeOrEmpty: string): s
   return `${safe}${ext}`;
 }
 
-/** Public download endpoint — same-origin so `fetch` + Web Share succeed in the gallery app. */
-async function fetchShareFinalDownloadBlob(
+/** Same-origin full-quality bytes for Save / Share (no pop-ups). */
+export async function fetchShareFinalDownloadBlob(
   shareToken: string,
   f: ShareGalleryFinal,
 ): Promise<Blob> {
@@ -707,6 +707,13 @@ async function fetchShareFinalDownloadBlob(
     );
   }
   return res.blob();
+}
+
+/**
+ * Uses `navigator.share({ files })` when available. Returns `true` if share ran or the user cancelled the sheet.
+ */
+export async function tryNavigatorShareFinalPhoto(blob: Blob, displayName: string): Promise<boolean> {
+  return webSharePhotoFile(blob, displayName);
 }
 
 async function webSharePhotoFile(blob: Blob, displayName: string): Promise<boolean> {
@@ -735,50 +742,6 @@ async function webSharePhotoFile(blob: Blob, displayName: string): Promise<boole
     if (aborted) return true;
     return false;
   }
-}
-
-/** Opens a temporary object URL in a new tab so the user can use the browser Share / Save menu. */
-function openPhotoBlobInNewTab(blob: Blob): boolean {
-  if (typeof window === "undefined") return false;
-  const u = URL.createObjectURL(blob);
-  const w = window.open(u, "_blank", "noopener,noreferrer");
-  if (!w) {
-    URL.revokeObjectURL(u);
-    return false;
-  }
-  window.setTimeout(() => URL.revokeObjectURL(u), 120_000);
-  return true;
-}
-
-/**
- * Phones/tablets: prefer native share (“Save Image”, Photos). Otherwise open a blob-backed tab or CDN URL.
- * Desktop/coarse callers should bypass and use `<a href={download}>` unless they’re sure.
- */
-export async function deliverFinalPhotoToMobile(
-  shareToken: string,
-  f: ShareGalleryFinal,
-): Promise<"share" | "blob_tab" | "remote_tab"> {
-  if (typeof window === "undefined") {
-    throw new ShareGalleryError("Save is only available in the browser.", 400, null);
-  }
-  const blob = await fetchShareFinalDownloadBlob(shareToken, f);
-
-  const shared = await webSharePhotoFile(blob, f.name || `final-${f.id}`);
-  if (shared) return "share";
-
-  if (openPhotoBlobInNewTab(blob)) return "blob_tab";
-
-  const remote = f.url?.trim()
-    ? f.url.trim()
-    : getShareFinalDownloadUrl(shareToken, f.id);
-  const w = window.open(remote, "_blank", "noopener,noreferrer");
-  if (w) return "remote_tab";
-
-  throw new ShareGalleryError(
-    "This browser blocked the save window. Allow pop‑ups for this gallery, tap Save again, or long‑press the photo preview and choose “Save”.",
-    400,
-    null,
-  );
 }
 
 export type ShareFinalZipEntry = { id: string; name: string };

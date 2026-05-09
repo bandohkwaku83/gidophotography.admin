@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
 import {
-  deliverFinalPhotoToMobile,
+  fetchShareFinalDownloadBlob,
+  tryNavigatorShareFinalPhoto,
   getShareFinalDownloadUrl,
   getShareFinalLockedPreviewUrl,
   getShareGallery,
@@ -19,10 +20,12 @@ import {
 import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
 import { usePreferInlineFinalSave } from "@/lib/use-prefer-inline-final-save";
+import { useShareSaveHints } from "@/lib/use-share-save-hints";
 import { folderCoverObjectPositionStyle, type ApiFolder } from "@/lib/folders-api";
 import {
   CalendarDays,
   Check,
+  Copy,
   Columns3,
   Download,
   Focus,
@@ -33,6 +36,7 @@ import {
   Lock,
   PanelsTopLeft,
   Send,
+  Share2,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -206,10 +210,17 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [gridLayout, setGridLayout] = useState<GridLayout>("spotlight");
   const [downloadAllFinalsBusy, setDownloadAllFinalsBusy] = useState(false);
   const [finalSaveBusyId, setFinalSaveBusyId] = useState<string | null>(null);
+  const [photoSaveAssist, setPhotoSaveAssist] = useState<{
+    objectUrl: string;
+    label: string;
+    suggestOpenExternally: boolean;
+  } | null>(null);
 
   const preferInlineFinalSave = usePreferInlineFinalSave();
-  /** Single-flight guard for Save on touch devices (`deliverFinalPhotoToMobile`). */
+  const shareHints = useShareSaveHints();
+  /** Single-flight guard for Save on touch devices (share sheet + in-page saver). */
   const finalDeliverLock = useRef(false);
+  const photoSaveBlobUrlRef = useRef<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [galleryMusicStarted, setGalleryMusicStarted] = useState(false);
@@ -373,6 +384,42 @@ export function ClientGalleryApp({ token }: { token: string }) {
     [gallery],
   );
 
+  /** One place for coarse-pointer final Save / Share wording (Share sheet vs in‑app browsers). */
+  const touchMobileFinalSaveUx = useMemo(() => {
+    if (!preferInlineFinalSave) return null;
+
+    let explainer:
+      | { variant: "in_app"; heading: string; body: string }
+      | { variant: "one_line"; text: string }
+      | null = null;
+
+    if (shareHints.inAppSocialWebView) {
+      explainer = {
+        variant: "in_app",
+        heading: "For Save to Photos, use Safari or Chrome",
+        body: "Browsers opened from chat apps usually block downloads. Use Open in Safari (or Browser / Chrome) in the ⋯ or share menu above, open this gallery there, then tap Save / Share. You can copy the link below anytime.",
+      };
+    } else if (shareHints.likelyWebShareImage) {
+      explainer = {
+        variant: "one_line",
+        text: "Tap Save / Share to open your phone’s Share sheet—pick Save Image, Photos, Files, Messages, AirDrop, and similar options.",
+      };
+    } else {
+      explainer = {
+        variant: "one_line",
+        text: "Tap Save / Share. We’ll use Share when your browser supports it, or open a preview you can touch and hold to Save Image.",
+      };
+    }
+
+    const saveButtonTitle = shareHints.inAppSocialWebView
+      ? "Prefer opening this gallery in Safari or Chrome. This opens Share when available, otherwise a saver you can touch and hold."
+      : shareHints.likelyWebShareImage
+        ? "Opens the Share sheet so you choose Photos, Files, or another destination when your browser supports it."
+        : "Opens Share where supported, otherwise a preview you touch and hold to save.";
+
+    return { explainer, saveButtonTitle };
+  }, [preferInlineFinalSave, shareHints.inAppSocialWebView, shareHints.likelyWebShareImage]);
+
   /** Photos to navigate in the lightbox (matches current tab’s upload list). */
   const lightboxNavAssets = visibleAssets;
 
@@ -413,6 +460,22 @@ export function ClientGalleryApp({ token }: { token: string }) {
     setZoom(1);
   }, []);
 
+  const closePhotoSaveAssist = useCallback(() => {
+    const url = photoSaveBlobUrlRef.current;
+    photoSaveBlobUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+    setPhotoSaveAssist(null);
+  }, []);
+
+  const copyGalleryPageUrl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      showToast("Gallery link copied. Paste it into Safari or Chrome, then tap Save / Share again.", "success");
+    } catch {
+      showToast("Could not copy automatically. Copy the website address manually and open it in Safari or Chrome.", "error");
+    }
+  }, [showToast]);
+
   const handleDeliverFinalPhotoMobile = useCallback(
     async (f: ShareGalleryFinal) => {
       if (downloadAllFinalsBusy || finalDeliverLock.current) return;
@@ -420,22 +483,50 @@ export function ClientGalleryApp({ token }: { token: string }) {
       const id = f.id;
       setFinalSaveBusyId(id);
       try {
-        await deliverFinalPhotoToMobile(token, f);
+        const blob = await fetchShareFinalDownloadBlob(token, f);
+        const viaShare = await tryNavigatorShareFinalPhoto(blob, f.name || `final-${f.id}`);
+        if (viaShare) return;
+
+        const url = URL.createObjectURL(blob);
+        if (photoSaveBlobUrlRef.current) URL.revokeObjectURL(photoSaveBlobUrlRef.current);
+        photoSaveBlobUrlRef.current = url;
+        setPhotoSaveAssist({
+          objectUrl: url,
+          label: (f.name || "Photo").replace(/[^\w\s.-]/g, "").trim() || "Photo",
+          suggestOpenExternally: shareHints.inAppSocialWebView,
+        });
       } catch (e) {
         const msg =
           e instanceof ShareGalleryError
             ? e.message
             : e instanceof Error
               ? e.message
-              : "Could not save this photo.";
+              : "Could not load this photo.";
         showToast(msg, "error");
       } finally {
         finalDeliverLock.current = false;
         setFinalSaveBusyId((cur) => (cur === id ? null : cur));
       }
     },
-    [token, showToast, downloadAllFinalsBusy],
+    [token, showToast, downloadAllFinalsBusy, shareHints.inAppSocialWebView],
   );
+
+  useEffect(() => {
+    return () => {
+      const orphan = photoSaveBlobUrlRef.current;
+      photoSaveBlobUrlRef.current = null;
+      if (orphan) URL.revokeObjectURL(orphan);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!photoSaveAssist) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePhotoSaveAssist();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [photoSaveAssist, closePhotoSaveAssist]);
 
   async function refetchGallery() {
     const g = await getShareGallery(token);
@@ -970,6 +1061,32 @@ export function ClientGalleryApp({ token }: { token: string }) {
             </p>
           ) : (
             <>
+              {preferInlineFinalSave && downloadableFinals.length > 0 && touchMobileFinalSaveUx?.explainer ? (
+                touchMobileFinalSaveUx.explainer.variant === "in_app" ? (
+                  <div className="mb-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/35">
+                    <div>
+                      <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">
+                        {touchMobileFinalSaveUx.explainer.heading}
+                      </p>
+                      <p className="mt-1.5 text-sm leading-relaxed text-amber-900/95 dark:text-amber-100/95">
+                        {touchMobileFinalSaveUx.explainer.body}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void copyGalleryPageUrl()}
+                      className="inline-flex items-center gap-2 rounded-xl border border-amber-300/90 bg-white px-3 py-2 text-sm font-semibold text-amber-950 shadow-sm dark:border-amber-700 dark:bg-zinc-900 dark:text-amber-50"
+                    >
+                      <Copy className="h-4 w-4 shrink-0" aria-hidden />
+                      Copy gallery link
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mb-4 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                    {touchMobileFinalSaveUx.explainer.text}
+                  </p>
+                )
+              ) : null}
               {downloadableFinals.length > 0 ? (
                 <div className="mb-4 flex justify-end">
                   <button
@@ -1033,7 +1150,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
                       ) : preferInlineFinalSave ? (
                         <button
                           type="button"
-                          title="Save to Photos / Gallery via the Share sheet when available"
+                          title={touchMobileFinalSaveUx?.saveButtonTitle}
+                          aria-label={
+                            touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo to your device"
+                          }
                           disabled={finalSaveBusyId !== null}
                           aria-busy={finalSaveBusyId === f.id}
                           onClick={() => void handleDeliverFinalPhotoMobile(f)}
@@ -1042,9 +1162,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
                           {finalSaveBusyId === f.id ? (
                             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                           ) : (
-                            <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            <Share2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                           )}
-                          Save
+                          Save / Share
                         </button>
                       ) : (
                         <a
@@ -1292,7 +1412,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 ) : preferInlineFinalSave ? (
                   <button
                     type="button"
-                    title="Save to Photos / Gallery via the Share sheet when available"
+                    title={touchMobileFinalSaveUx?.saveButtonTitle}
+                    aria-label={
+                      touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo to your device"
+                    }
                     disabled={finalSaveBusyId !== null}
                     aria-busy={finalSaveBusyId === finalLb.id}
                     onClick={() => void handleDeliverFinalPhotoMobile(finalLb)}
@@ -1301,9 +1424,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     {finalSaveBusyId === finalLb.id ? (
                       <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                     ) : (
-                      <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      <Share2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     )}
-                    Save
+                    Save / Share
                   </button>
                 ) : (
                   <a
@@ -1483,6 +1606,63 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 Confirm
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {photoSaveAssist ? (
+        <div
+          className="fixed inset-0 z-[72] flex flex-col bg-black"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Save photo: ${photoSaveAssist.label}`}
+        >
+          <div className="flex shrink-0 flex-col gap-3 border-b border-white/10 bg-zinc-950/95 px-4 pb-4 pt-[max(env(safe-area-inset-top),1rem)] backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 flex-1 pt-2 text-sm font-medium leading-snug text-white">
+                Save to your device
+              </p>
+              <button
+                type="button"
+                onClick={() => closePhotoSaveAssist()}
+                className="shrink-0 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium text-white backdrop-blur-sm"
+              >
+                Done
+              </button>
+            </div>
+            <p className="text-xs leading-relaxed text-zinc-300">
+              Touch and hold the image below. Choose Save Image or Save to Photos (iPhone) or Share / Save image
+              (Android).
+            </p>
+            {photoSaveAssist.suggestOpenExternally ? (
+              <>
+                <p className="text-xs leading-relaxed text-amber-100/90">
+                  Easiest Save to Photos: copy the gallery link, open Safari or Chrome, paste the URL, tap Save /
+                  Share there.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void copyGalleryPageUrl()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2.5 text-sm font-semibold text-white"
+                >
+                  <Copy className="h-4 w-4 shrink-0" aria-hidden />
+                  Copy gallery link
+                </button>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-zinc-400">
+                Prefer the Share menu? Close this preview and tap Save / Share once more when your browser offers it.
+              </p>
+            )}
+          </div>
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photoSaveAssist.objectUrl}
+              alt={photoSaveAssist.label}
+              draggable={false}
+              className="max-h-full max-w-full touch-manipulation select-auto object-contain"
+            />
           </div>
         </div>
       ) : null}
