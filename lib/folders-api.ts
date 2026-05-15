@@ -649,6 +649,40 @@ function readHasConflicts(body: unknown): boolean {
   return raw === true || raw === "true";
 }
 
+function readConflictingFilenamesFromDuplicatePreview(body: unknown): string[] | undefined {
+  const normalize = (raw: unknown): string[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const names = raw
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter(Boolean);
+    const uniq: string[] = [];
+    const seen = new Set<string>();
+    for (const n of names) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      uniq.push(n);
+    }
+    return uniq.length > 0 ? uniq : undefined;
+  };
+
+  const tryRecord = (r: Record<string, unknown> | null): string[] | undefined => {
+    if (!r) return undefined;
+    return (
+      normalize(r.conflictingFilenames) ??
+      normalize(r.conflicting_filenames) ??
+      normalize(r.duplicateFilenames) ??
+      normalize(r.duplicate_filenames) ??
+      normalize(r.conflicts)
+    );
+  };
+
+  if (!body || typeof body !== "object") return undefined;
+  const o = body as Record<string, unknown>;
+  const nested =
+    o.data && typeof o.data === "object" ? (o.data as Record<string, unknown>) : null;
+  return tryRecord(o) ?? tryRecord(nested);
+}
+
 /**
  * Check whether any of the given filenames already exist for this folder before uploading bytes.
  * POST body: `{ kind, filenames }` (names only).
@@ -656,7 +690,7 @@ function readHasConflicts(body: unknown): boolean {
 export async function postFolderMediaDuplicatePreview(
   folderId: string,
   input: { kind: FolderMediaDuplicatePreviewKind; filenames: string[] },
-): Promise<{ hasConflicts: boolean }> {
+): Promise<{ hasConflicts: boolean; conflictingFilenames?: string[] }> {
   const res = await authedFetch(
     `/api/folders/${encodeURIComponent(folderId)}/media/duplicate-preview`,
     {
@@ -676,7 +710,11 @@ export async function postFolderMediaDuplicatePreview(
       body,
     );
   }
-  return { hasConflicts: readHasConflicts(body) };
+  const apiNames = readConflictingFilenamesFromDuplicatePreview(body);
+  return {
+    hasConflicts: readHasConflicts(body),
+    ...(apiNames?.length ? { conflictingFilenames: apiNames } : {}),
+  };
 }
 
 export async function regenerateFolderShare(
@@ -1058,6 +1096,38 @@ export function extractFinalMediaList(folder: ApiFolder): ApiFolderMedia[] {
     if (Array.isArray(o.final)) return o.final;
   }
   return [];
+}
+
+/** Display filename for a folder media row (aligned with gallery / duplicate checks). */
+export function folderMediaRowFilename(m: ApiFolderMedia): string {
+  return (m.originalName || m.originalFilename || m.filename || m.name || "").trim();
+}
+
+/**
+ * Filenames in {@link incoming} that match an existing file name in the folder
+ * for raw uploads or finals (same string match as typical duplicate checks).
+ */
+export function incomingFilenamesConflictingWithFolder(
+  kind: FolderMediaDuplicatePreviewKind,
+  incoming: string[],
+  folder: ApiFolder,
+): string[] {
+  const existingRows =
+    kind === "raw" ? extractRawMediaList(folder) : extractFinalMediaList(folder);
+  const existing = new Set<string>();
+  for (const m of existingRows) {
+    const n = folderMediaRowFilename(m);
+    if (n) existing.add(n);
+  }
+  const out: string[] = [];
+  const seenOut = new Set<string>();
+  for (const raw of incoming) {
+    const name = raw.trim();
+    if (!name || !existing.has(name) || seenOut.has(name)) continue;
+    seenOut.add(name);
+    out.push(name);
+  }
+  return out;
 }
 
 function apiEditStatusToUi(s?: string): "NONE" | "IN_PROGRESS" | "EDITED" {

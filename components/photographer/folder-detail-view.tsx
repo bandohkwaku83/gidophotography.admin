@@ -25,6 +25,7 @@ import {
   Lock,
   RefreshCw,
   Unlock,
+  FileWarning,
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,7 @@ import {
   finalImagesLockedForClient,
   getFolderShareAbsoluteUrl,
   getShareLinkExpiryPresets,
+  incomingFilenamesConflictingWithFolder,
   parseFolderCoverFocal,
   patchFolderStatus,
   deleteAllFolderFinalMedia,
@@ -207,6 +209,131 @@ function UploadProgressBanner({
   );
 }
 
+type DuplicateUploadConflictPrompt = {
+  kind: "raw" | "final";
+  files: File[];
+  conflictingNames: string[];
+};
+
+function DuplicateUploadConflictDialog({
+  prompt,
+  onCancel,
+  onSkip,
+  onReplace,
+}: {
+  prompt: DuplicateUploadConflictPrompt;
+  onCancel: () => void;
+  onSkip: () => void;
+  onReplace: () => void;
+}) {
+  const conflictSet = useMemo(
+    () => new Set(prompt.conflictingNames),
+    [prompt.conflictingNames],
+  );
+  const newFilesCount = useMemo(
+    () => prompt.files.filter((f) => !conflictSet.has(f.name)).length,
+    [prompt.files, conflictSet],
+  );
+  const scopeLabel = prompt.kind === "raw" ? "raw uploads" : "delivered finals";
+  const knowsConflictNames = prompt.conflictingNames.length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="duplicate-filename-dialog-title"
+    >
+      <div className="flex max-h-[min(90vh,36rem)] w-full max-w-md flex-col rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
+        <div className="flex shrink-0 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 dark:bg-amber-950/60">
+            <FileWarning className="h-5 w-5 text-amber-800 dark:text-amber-300" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2
+              id="duplicate-filename-dialog-title"
+              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              Filename overlap
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {knowsConflictNames ? (
+                <>
+                  You’re adding <span className="font-semibold text-zinc-800 dark:text-zinc-200">{prompt.files.length}</span>{" "}
+                  file{prompt.files.length === 1 ? "" : "s"} to {scopeLabel}.{" "}
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                    {prompt.conflictingNames.length}
+                  </span>{" "}
+                  name{prompt.conflictingNames.length === 1 ? "" : "s"} already exist in this gallery.
+                  {newFilesCount > 0 ? (
+                    <>
+                      {" "}
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">{newFilesCount}</span> file
+                      {newFilesCount === 1 ? "" : "s"} can still be added if you skip duplicates.
+                    </>
+                  ) : (
+                    <> Skipping duplicates would not add anything new — every filename in this batch already exists.</>
+                  )}
+                </>
+              ) : (
+                <>
+                  You’re adding <span className="font-semibold text-zinc-800 dark:text-zinc-200">{prompt.files.length}</span>{" "}
+                  file{prompt.files.length === 1 ? "" : "s"}. At least one filename matches an existing file in {scopeLabel},
+                  but the exact names couldn’t be listed. Use <strong>Skip duplicates</strong> to keep what’s in the gallery,
+                  or <strong>Replace existing</strong> to overwrite matches.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {knowsConflictNames ? (
+          <div className="mt-4 flex min-h-0 shrink flex-col">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Conflicting names
+            </p>
+            <ul className="mt-2 max-h-36 shrink overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50/90 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900/60">
+              {prompt.conflictingNames.map((name) => (
+                <li
+                  key={name}
+                  className="truncate border-b border-zinc-100 py-1.5 font-medium text-zinc-800 last:border-b-0 dark:border-zinc-800 dark:text-zinc-200"
+                  title={name}
+                >
+                  {name}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSkip}
+            className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+          >
+            Skip duplicates
+          </button>
+          <button
+            type="button"
+            onClick={onReplace}
+            className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+          >
+            Replace existing
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function FolderDetailView({ folderId }: { folderId: string }) {
   const { showToast } = useToast();
   const [origin, setOrigin] = useState("");
@@ -245,6 +372,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     kind: "raw" | "final";
     files: File[];
     selectionMediaId?: string;
+    conflictingNames: string[];
   }>(null);
 
   /** Carries payment/lock fields through duplicate-modal flows for final uploads. */
@@ -512,13 +640,26 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     let awaitingConflictChoice = false;
     const selectionMediaId: string | undefined = undefined;
     try {
-      const { hasConflicts } = await postFolderMediaDuplicatePreview(folder._id, {
+      const dupPreview = await postFolderMediaDuplicatePreview(folder._id, {
         kind: "final",
         filenames: files.map((f) => f.name),
       });
-      if (hasConflicts) {
+      if (dupPreview.hasConflicts) {
         awaitingConflictChoice = true;
-        setDuplicateFilenamePrompt({ kind: "final", files, selectionMediaId });
+        const conflictingNames =
+          dupPreview.conflictingFilenames && dupPreview.conflictingFilenames.length > 0
+            ? dupPreview.conflictingFilenames
+            : incomingFilenamesConflictingWithFolder(
+                "final",
+                files.map((f) => f.name),
+                folder,
+              );
+        setDuplicateFilenamePrompt({
+          kind: "final",
+          files,
+          selectionMediaId,
+          conflictingNames,
+        });
         return;
       }
 
@@ -600,13 +741,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     setUploadProgress({ kind: "raw", phase: "preparing", computable: false, percent: 0 });
     let awaitingConflictChoice = false;
     try {
-      const { hasConflicts } = await postFolderMediaDuplicatePreview(folder._id, {
+      const dupPreview = await postFolderMediaDuplicatePreview(folder._id, {
         kind: "raw",
         filenames: files.map((f) => f.name),
       });
-      if (hasConflicts) {
+      if (dupPreview.hasConflicts) {
         awaitingConflictChoice = true;
-        setDuplicateFilenamePrompt({ kind: "raw", files });
+        const conflictingNames =
+          dupPreview.conflictingFilenames && dupPreview.conflictingFilenames.length > 0
+            ? dupPreview.conflictingFilenames
+            : incomingFilenamesConflictingWithFolder(
+                "raw",
+                files.map((f) => f.name),
+                folder,
+              );
+        setDuplicateFilenamePrompt({ kind: "raw", files, conflictingNames });
         return;
       }
 
@@ -632,6 +781,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       setUploadProgress(null);
       if (!awaitingConflictChoice) setBusy(false);
     }
+  }
+
+  function onDuplicatePromptCancel() {
+    setDuplicateFilenamePrompt(null);
+    setUploadProgress(null);
+    setBusy(false);
+    pendingFinalDeliveryRef.current = null;
   }
 
   async function onDuplicatePromptReplace() {
@@ -682,7 +838,30 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   async function onDuplicatePromptSkip() {
     const p = duplicateFilenamePrompt;
     if (!folder || !p) return;
+
+    const conflictSet = new Set(p.conflictingNames);
+    /** When we know which names collide, omit them from the request entirely (saves time and bandwidth). */
+    const canFilterLocally = p.conflictingNames.length > 0;
+    const filesToUpload = canFilterLocally
+      ? p.files.filter((f) => !conflictSet.has(f.name))
+      : p.files;
+    const skippedWithoutUpload = canFilterLocally ? p.files.length - filesToUpload.length : 0;
+
     setDuplicateFilenamePrompt(null);
+
+    if (filesToUpload.length === 0) {
+      setUploadProgress(null);
+      setBusy(false);
+      pendingFinalDeliveryRef.current = null;
+      showToast(
+        p.kind === "raw"
+          ? "Nothing to upload — those filenames are already in raw uploads."
+          : "Nothing to upload — those filenames are already in finals.",
+        "success",
+      );
+      return;
+    }
+
     setBusy(true);
     setUploadProgress({
       kind: p.kind,
@@ -690,14 +869,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       computable: false,
       percent: 0,
       fileIndex: 1,
-      fileCount: p.files.length,
+      fileCount: filesToUpload.length,
     });
     try {
       let ignored = 0;
       if (p.kind === "raw") {
         const result = await uploadFolderRawMedia(
           folder._id,
-          p.files,
+          filesToUpload,
           uploadProgressHandler("raw"),
           rawUploadFormOptions("ignore"),
         );
@@ -705,23 +884,36 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       } else {
         const result = await uploadFolderFinalMedia(
           folder._id,
-          p.files,
+          filesToUpload,
           uploadProgressHandler("final"),
-          mergeFinalFormOpts("ignore", p.files, p.selectionMediaId),
+          mergeFinalFormOpts("ignore", filesToUpload, p.selectionMediaId),
         );
         ignored = result?.ignoredDuplicatesCount ?? 0;
       }
       await refreshFolder();
-      showToast(
-        ignored > 0
-          ? p.kind === "raw"
-            ? `Uploaded; ${ignored} duplicate filename(s) skipped.`
-            : `Uploaded; ${ignored} duplicate final name(s) skipped.`
-          : p.kind === "raw"
-            ? `${p.files.length} file(s) uploaded.`
-            : `${p.files.length} final(s) uploaded.`,
-        "success",
-      );
+      if (skippedWithoutUpload > 0) {
+        showToast(
+          ignored > 0
+            ? p.kind === "raw"
+              ? `Uploaded ${filesToUpload.length} new file(s); ${skippedWithoutUpload} duplicate name(s) were not sent. Server also skipped ${ignored}.`
+              : `Uploaded ${filesToUpload.length} new final(s); ${skippedWithoutUpload} duplicate name(s) were not sent. Server also skipped ${ignored}.`
+            : p.kind === "raw"
+              ? `Uploaded ${filesToUpload.length} new file(s); ${skippedWithoutUpload} duplicate name(s) were not sent.`
+              : `Uploaded ${filesToUpload.length} new final(s); ${skippedWithoutUpload} duplicate name(s) were not sent.`,
+          "success",
+        );
+      } else {
+        showToast(
+          ignored > 0
+            ? p.kind === "raw"
+              ? `Uploaded; ${ignored} duplicate filename(s) skipped.`
+              : `Uploaded; ${ignored} duplicate final name(s) skipped.`
+            : p.kind === "raw"
+              ? `${filesToUpload.length} file(s) uploaded.`
+              : `${filesToUpload.length} final(s) uploaded.`,
+          "success",
+        );
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Upload failed.", "error");
     } finally {
@@ -2217,40 +2409,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       ) : null}
 
       {duplicateFilenamePrompt ? (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="duplicate-filename-dialog-title"
-        >
-          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950">
-            <h2
-              id="duplicate-filename-dialog-title"
-              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
-            >
-              Filename conflict
-            </h2>
-            <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Duplicate filenames. Replace or skip?
-            </p>
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => void onDuplicatePromptSkip()}
-                className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
-              >
-                Skip
-              </button>
-              <button
-                type="button"
-                onClick={() => void onDuplicatePromptReplace()}
-                className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
-              >
-                Replace
-              </button>
-            </div>
-          </div>
-        </div>
+        <DuplicateUploadConflictDialog
+          prompt={{
+            kind: duplicateFilenamePrompt.kind,
+            files: duplicateFilenamePrompt.files,
+            conflictingNames: duplicateFilenamePrompt.conflictingNames,
+          }}
+          onCancel={onDuplicatePromptCancel}
+          onSkip={() => void onDuplicatePromptSkip()}
+          onReplace={() => void onDuplicatePromptReplace()}
+        />
       ) : null}
     </div>
   );

@@ -227,10 +227,16 @@ export function ClientGalleryApp({ token }: { token: string }) {
   /** Single-flight guard for Save on touch devices (share sheet + in-page saver). */
   const finalDeliverLock = useRef(false);
   const photoSaveBlobUrlRef = useRef<string | null>(null);
+  /** Applied once after share data loads so the first tab matches finals vs originals. */
+  const initialPhotoTabAppliedRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [galleryMusicStarted, setGalleryMusicStarted] = useState(false);
   const [galleryMusicMuted, setGalleryMusicMuted] = useState(false);
+
+  useEffect(() => {
+    initialPhotoTabAppliedRef.current = false;
+  }, [token]);
 
   useEffect(() => {
     try {
@@ -331,6 +337,62 @@ export function ClientGalleryApp({ token }: { token: string }) {
       setPhotoTab("all");
     }
   }, [gallery?.finalDelivery, photoTab]);
+
+  /**
+   * First open: land on Finals when there are delivered finals; otherwise Originals.
+   * Optional URL override: `?tab=edited|all|selected` or `?view=finals|raw|originals|all|selected|edited`.
+   */
+  useEffect(() => {
+    if (loadState !== "ok" || !gallery) return;
+    if (initialPhotoTabAppliedRef.current) return;
+    initialPhotoTabAppliedRef.current = true;
+
+    let tabParam = "";
+    let viewParam = "";
+    if (typeof window !== "undefined") {
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        tabParam = sp.get("tab")?.toLowerCase() ?? "";
+        viewParam = sp.get("view")?.toLowerCase() ?? "";
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const showFinals = gallery.finalDelivery !== false;
+
+    if (tabParam === "selected" || viewParam === "selected") {
+      setPhotoTab("selected");
+      return;
+    }
+    if (
+      showFinals &&
+      (tabParam === "edited" ||
+        tabParam === "finals" ||
+        viewParam === "finals" ||
+        viewParam === "edited")
+    ) {
+      setPhotoTab("edited");
+      return;
+    }
+    if (
+      tabParam === "all" ||
+      tabParam === "originals" ||
+      tabParam === "raw" ||
+      viewParam === "raw" ||
+      viewParam === "originals" ||
+      viewParam === "all"
+    ) {
+      setPhotoTab("all");
+      return;
+    }
+
+    if (showFinals && gallery.finals.length > 0) {
+      setPhotoTab("edited");
+    } else {
+      setPhotoTab("all");
+    }
+  }, [gallery, loadState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -827,7 +889,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 {displayTitle}
               </h1>
               <p className="mt-1.5 max-w-2xl text-xs leading-snug text-zinc-600 sm:text-sm dark:text-zinc-400">
-                Tap a photo to select it — tabs and layout live below.
+                <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Originals</strong> are from your
+                shoot; <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Finals</strong> are edited
+                files your photographer delivers. Tabs below switch between them.
               </p>
             </div>
 
@@ -885,9 +949,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
             <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
               {(
                 [
-                  ["all", "All Photos"],
-                  ["selected", "Selected Photos"],
-                  ...(showFinalsTab ? ([["edited", "Edited Photos"]] as const) : []),
+                  ["all", "Originals"],
+                  ["selected", "Selected"],
+                  ...(showFinalsTab ? ([["edited", "Finals"]] as const) : []),
                 ] as const
               ).map(([key, label]) => {
                 const count =
