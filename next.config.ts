@@ -62,6 +62,23 @@ function buildImageRemotePatterns(): RemotePattern[] {
     add({ protocol: "https", hostname: "api.gidophotography.com", pathname: "/**" });
   }
 
+  /* Absolute image URLs from S3 / CDN (e.g. gallery cover on client share). */
+  add({
+    protocol: "https",
+    hostname: "gidophotography-images.s3.us-east-1.amazonaws.com",
+    pathname: "/**",
+  });
+
+  const imageHosts = process.env.NEXT_PUBLIC_IMAGE_REMOTE_HOSTS;
+  if (imageHosts) {
+    for (const part of imageHosts.split(",")) {
+      const t = part.trim();
+      if (!t) continue;
+      if (/:\/\//.test(t)) fromFullUrl(t);
+      else add({ protocol: "https", hostname: t.toLowerCase(), pathname: "/**" });
+    }
+  }
+
   return [...map.values()];
 }
 
