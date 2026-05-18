@@ -94,6 +94,22 @@ function draftToCreateBookingBody(draft: NewBookingDraft): CreateBookingBody {
   };
 }
 
+/** Keep calendar/sidebar aligned with what the user just saved (draft) even when the PUT body or TZ parsing differs slightly from the raw API row. */
+function overlayDraftOnBookedShoot(mapped: BookedShoot, draft: NewBookingDraft): BookedShoot {
+  return {
+    ...mapped,
+    title: draft.title,
+    clientId: draft.clientId,
+    clientName: draft.clientName,
+    date: draft.date,
+    startTime: draft.startTime,
+    endTime: draft.endTime,
+    location: draft.location,
+    description: draft.description,
+    kind: draft.kind,
+  };
+}
+
 function shootDotClass(s: BookedShoot): string {
   return apiColorToDotClass(s.shootColor) ?? KIND_META[s.kind].dot;
 }
@@ -129,26 +145,32 @@ export function SchedulesClient() {
     return ["all", ...SHOOT_KINDS_ORDER];
   }, [shootTypesMeta]);
 
-  const loadMonth = useCallback(async () => {
-    setBookingsLoading(true);
-    try {
-      const typeParam =
-        kindFilter === "all" ? "" : kindToApiShootType(kindFilter);
-      const res = await listBookings({
-        year: viewYear,
-        month: viewMonth + 1,
-        type: typeParam,
-      });
-      setBookings(res.bookings.map(mapApiBookingToBookedShoot));
-    } catch (e) {
-      const msg =
-        e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Could not load bookings.";
-      showToast(msg, "error");
-      setBookings([]);
-    } finally {
-      setBookingsLoading(false);
-    }
-  }, [viewYear, viewMonth, kindFilter, showToast]);
+  const reloadBookings = useCallback(
+    async (opts?: { year?: number; monthIndex?: number; showSpinner?: boolean }) => {
+      const yr = opts?.year ?? viewYear;
+      const mIdx = opts?.monthIndex ?? viewMonth;
+      const showSpinner = opts?.showSpinner !== false;
+      if (showSpinner) setBookingsLoading(true);
+      try {
+        const typeParam =
+          kindFilter === "all" ? "" : kindToApiShootType(kindFilter);
+        const res = await listBookings({
+          year: yr,
+          month: mIdx + 1,
+          type: typeParam,
+        });
+        setBookings(res.bookings.map(mapApiBookingToBookedShoot));
+      } catch (e) {
+        const msg =
+          e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Could not load bookings.";
+        showToast(msg, "error");
+        setBookings([]);
+      } finally {
+        setBookingsLoading(false);
+      }
+    },
+    [viewYear, viewMonth, kindFilter, showToast],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -187,8 +209,8 @@ export function SchedulesClient() {
   }, [showToast]);
 
   useEffect(() => {
-    void loadMonth();
-  }, [loadMonth]);
+    void reloadBookings();
+  }, [reloadBookings]);
 
   useEffect(() => {
     if (!bookingFocusId) return;
@@ -289,15 +311,19 @@ export function SchedulesClient() {
 
   async function handleSaveBooking(draft: NewBookingDraft) {
     const { booking } = await createBooking(draftToCreateBookingBody(draft));
-    const mapped = mapApiBookingToBookedShoot(booking);
+    const merged = overlayDraftOnBookedShoot(mapApiBookingToBookedShoot(booking), draft);
     setBookings((prev) => {
-      const rest = prev.filter((b) => b.id !== mapped.id);
-      return [...rest, mapped];
+      const rest = prev.filter((b) => b.id !== merged.id);
+      return [...rest, merged];
     });
     const { y, m, d } = parseIso(draft.date);
+    const monthViewWillChange = y !== viewYear || m !== viewMonth;
     setViewYear(y);
     setViewMonth(m);
     setSelectedDay(d);
+    if (!monthViewWillChange) {
+      void reloadBookings({ year: y, monthIndex: m, showSpinner: false });
+    }
     showToast("Booking saved.", "success");
     void (async () => {
       try {
@@ -311,15 +337,19 @@ export function SchedulesClient() {
 
   async function handleReplaceBooking(id: string, draft: NewBookingDraft) {
     const { booking } = await replaceBooking(id, draftToCreateBookingBody(draft));
-    const mapped = mapApiBookingToBookedShoot(booking);
+    const merged = overlayDraftOnBookedShoot(mapApiBookingToBookedShoot(booking), draft);
     setBookings((prev) => {
-      const rest = prev.filter((b) => b.id !== mapped.id);
-      return [...rest, mapped];
+      const rest = prev.filter((b) => b.id !== merged.id);
+      return [...rest, merged];
     });
     const { y, m, d } = parseIso(draft.date);
+    const monthViewWillChange = y !== viewYear || m !== viewMonth;
     setViewYear(y);
     setViewMonth(m);
     setSelectedDay(d);
+    if (!monthViewWillChange) {
+      void reloadBookings({ year: y, monthIndex: m, showSpinner: false });
+    }
     showToast("Booking updated.", "success");
     void (async () => {
       try {
@@ -337,6 +367,7 @@ export function SchedulesClient() {
     try {
       await deleteBooking(id);
       setBookings((prev) => prev.filter((b) => b.id !== id));
+      void reloadBookings({ showSpinner: false });
       if (bookingToEdit?.id === id) setBookingToEdit(null);
       showToast("Booking deleted.", "success");
       void (async () => {

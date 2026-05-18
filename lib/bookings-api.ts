@@ -118,11 +118,13 @@ export function mapApiBookingToBookedShoot(b: ApiBooking): BookedShoot {
   const clientId = client?._id ?? "";
   const clientName = client?.name?.trim() || "Unknown client";
 
-  const start = new Date(b.startsAt);
-  const y = start.getFullYear();
-  const mo = start.getMonth();
-  const day = start.getDate();
-  const date = `${y}-${pad2(mo + 1)}-${pad2(day)}`;
+  const raw = b.startsAt.trim();
+  /** Prefer RFC3339 date prefix so UTC instants don't land on the previous/next local calendar day. */
+  const datePrefix = /^(\d{4}-\d{2}-\d{2})(?:[T\s]|$)/.exec(raw);
+  const start = new Date(raw);
+  const date = datePrefix
+    ? datePrefix[1]
+    : `${start.getFullYear()}-${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`;
   const startTime = `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
 
   let endTime: string | undefined;
