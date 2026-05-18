@@ -21,6 +21,9 @@ type Props = {
   /** From `GET /api/bookings/meta` `shootTypes`; when empty, local defaults are used. */
   shootTypes?: BookingShootTypeMeta[];
   onSave: (draft: NewBookingDraft) => void | Promise<void>;
+  /** When set, modal edits this booking (`PUT /api/bookings/:id` via `onReplace`). */
+  bookingToEdit?: BookedShoot | null;
+  onReplace?: (id: string, draft: NewBookingDraft) => void | Promise<void>;
 };
 
 function defaultKindFromShootTypes(shootTypes: BookingShootTypeMeta[] | undefined): ShootKind {
@@ -30,7 +33,15 @@ function defaultKindFromShootTypes(shootTypes: BookingShootTypeMeta[] | undefine
   return "portraits";
 }
 
-export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave }: Props) {
+export function NewBookingModal({
+  open,
+  onClose,
+  defaultDate,
+  shootTypes,
+  onSave,
+  bookingToEdit = null,
+  onReplace,
+}: Props) {
   const { showToast } = useToast();
   const [title, setTitle] = useState("");
   const [clientId, setClientId] = useState("");
@@ -63,14 +74,25 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
 
   useEffect(() => {
     if (!open) return;
-    setDate(defaultDate);
-    setTitle("");
-    setClientId("");
-    setStartTime("09:00");
-    setEndTime("");
-    setKind(defaultKindFromShootTypes(shootTypes));
-    setLocation("");
-    setDescription("");
+    if (bookingToEdit) {
+      setTitle(bookingToEdit.title);
+      setClientId(bookingToEdit.clientId);
+      setDate(bookingToEdit.date);
+      setStartTime(bookingToEdit.startTime);
+      setEndTime(bookingToEdit.endTime ?? "");
+      setKind(bookingToEdit.kind);
+      setLocation(bookingToEdit.location ?? "");
+      setDescription(bookingToEdit.description ?? "");
+    } else {
+      setDate(defaultDate);
+      setTitle("");
+      setClientId("");
+      setStartTime("09:00");
+      setEndTime("");
+      setKind(defaultKindFromShootTypes(shootTypes));
+      setLocation("");
+      setDescription("");
+    }
     setAddClientOpen(false);
     setSubmitting(false);
 
@@ -93,7 +115,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
     return () => {
       cancelled = true;
     };
-  }, [open, defaultDate, showToast]);
+  }, [open, defaultDate, shootTypes, bookingToEdit, showToast]);
 
   if (!open) return null;
 
@@ -109,7 +131,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
     }
     setSubmitting(true);
     try {
-      await onSave({
+      const draft: NewBookingDraft = {
         title: t,
         clientId,
         clientName: name,
@@ -119,7 +141,16 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
         location: location.trim() || undefined,
         kind,
         description: description.trim() || undefined,
-      });
+      };
+      if (bookingToEdit) {
+        if (!onReplace) {
+          showToast("Cannot save: missing update handler.", "error");
+          return;
+        }
+        await onReplace(bookingToEdit.id, draft);
+      } else {
+        await onSave(draft);
+      }
       onClose();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not save booking.", "error");
@@ -160,7 +191,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
         >
           <div className="sticky top-0 flex items-center justify-between border-b border-zinc-100 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950">
             <h2 id="new-booking-title" className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              New booking
+              {bookingToEdit ? "Edit booking" : "New booking"}
             </h2>
             <button
               type="button"
@@ -301,7 +332,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
               />
             </div>
 
-            {/* <div className="grid gap-2">
+            <div className="grid gap-2">
               <label className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Description</label>
               <textarea
                 value={description}
@@ -311,7 +342,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
                 className={`${inputClass} min-h-[72px] resize-y`}
                 disabled={submitting}
               />
-            </div> */}
+            </div>
 
             <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
               <button
@@ -327,7 +358,7 @@ export function NewBookingModal({ open, onClose, defaultDate, shootTypes, onSave
                 disabled={!clientId || clientsLoading || submitting}
                 className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {submitting ? "Saving…" : "Save booking"}
+                {submitting ? "Saving…" : bookingToEdit ? "Save changes" : "Save booking"}
               </button>
             </div>
           </form>

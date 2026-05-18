@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Baby,
   Briefcase,
   Cake,
   Camera,
@@ -14,6 +15,7 @@ export type ShootKind =
   | "outdoor"
   | "birthday"
   | "graduation"
+  | "christening"
   | "portraits"
   | "commercial"
   | "other";
@@ -66,6 +68,12 @@ export const KIND_META: Record<
     chip: "bg-indigo-500/15 text-indigo-900 ring-indigo-500/25 dark:text-indigo-100 dark:ring-indigo-500/35",
     Icon: GraduationCap,
   },
+  christening: {
+    label: "Christening",
+    dot: "bg-teal-500",
+    chip: "bg-teal-500/15 text-teal-900 ring-teal-500/25 dark:text-teal-100 dark:ring-teal-500/35",
+    Icon: Baby,
+  },
   portraits: {
     label: "Portraits",
     dot: "bg-violet-500",
@@ -90,6 +98,7 @@ export const KIND_META: Record<
 export const SHOOT_KINDS_ORDER: ShootKind[] = [
   "wedding",
   "portraits",
+  "christening",
   "outdoor",
   "birthday",
   "graduation",

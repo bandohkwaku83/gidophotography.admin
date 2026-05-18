@@ -59,6 +59,9 @@ export type CreateBookingBody = {
   description: string;
 };
 
+/** Partial update payload for `PATCH /api/bookings/:id` (matches backend PATCH semantics). */
+export type PatchBookingBody = Partial<CreateBookingBody>;
+
 /** Map API `shootType` string (e.g. `Wedding`, `Other`) to app shoot kind. */
 export function apiShootTypeToKind(shootType: string): ShootKind {
   const k = shootType.trim().toLowerCase();
@@ -69,6 +72,7 @@ export function apiShootTypeToKind(shootType: string): ShootKind {
     outdoor: "outdoor",
     birthday: "birthday",
     graduation: "graduation",
+    christening: "christening",
     commercial: "commercial",
     other: "other",
   };
@@ -86,6 +90,7 @@ export function apiColorToDotClass(color?: string): string | null {
     blue: "bg-indigo-500",
     orange: "bg-amber-500",
     sky: "bg-sky-500",
+    teal: "bg-teal-500",
   };
   return c[color.trim().toLowerCase()] ?? null;
 }
@@ -225,12 +230,33 @@ export async function createBooking(input: CreateBookingBody): Promise<{ message
   return { message: o.message, booking: body as ApiBooking };
 }
 
-export async function updateBooking(
+/** Full replacement: `PUT /api/bookings/:id` — same JSON shape as create. */
+export async function replaceBooking(
   id: string,
-  input: Partial<Pick<CreateBookingBody, "title" | "location" | "description">>,
+  input: CreateBookingBody,
 ): Promise<{ message?: string; booking: ApiBooking }> {
   const res = await authedFetch(`/api/bookings/${encodeURIComponent(id)}`, {
     method: "PUT",
+    body: JSON.stringify(input),
+  });
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new ApiError(extractMessage(body, `Could not replace booking (${res.status})`), res.status, body);
+  }
+  const o = body as { message?: string; booking?: ApiBooking };
+  if (o.booking && typeof o.booking === "object") {
+    return { message: o.message, booking: o.booking };
+  }
+  return { message: o.message, booking: body as ApiBooking };
+}
+
+/** Partial update: `PATCH /api/bookings/:id` — send only changed fields (e.g. `{ title }`). */
+export async function patchBooking(
+  id: string,
+  input: PatchBookingBody,
+): Promise<{ message?: string; booking: ApiBooking }> {
+  const res = await authedFetch(`/api/bookings/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
   const body = await parseJson(res);

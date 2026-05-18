@@ -8,7 +8,9 @@ import {
   ChevronRight,
   Clock,
   MapPin,
+  Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
 import { NewBookingModal, type NewBookingDraft } from "@/components/schedules/new-booking-modal";
@@ -24,6 +26,7 @@ import {
   apiColorToDotClass,
   apiShootTypeToKind,
   createBooking,
+  deleteBooking,
   formatHmToApi12h,
   getBooking,
   getBookingsMeta,
@@ -31,7 +34,9 @@ import {
   kindToApiShootType,
   listBookings,
   mapApiBookingToBookedShoot,
+  replaceBooking,
   type BookingShootTypeMeta,
+  type CreateBookingBody,
 } from "@/lib/bookings-api";
 import { ApiError } from "@/lib/clients-api";
 import { cn } from "@/lib/utils";
@@ -76,6 +81,19 @@ function isToday(y: number, m: number, day: number) {
   return t.getFullYear() === y && t.getMonth() === m && t.getDate() === day;
 }
 
+function draftToCreateBookingBody(draft: NewBookingDraft): CreateBookingBody {
+  return {
+    title: draft.title,
+    clientId: draft.clientId,
+    date: draft.date,
+    shootType: kindToApiShootType(draft.kind),
+    start: formatHmToApi12h(draft.startTime),
+    end: draft.endTime ? formatHmToApi12h(draft.endTime) : "",
+    location: draft.location?.trim() ?? "",
+    description: draft.description?.trim() ?? "",
+  };
+}
+
 function shootDotClass(s: BookedShoot): string {
   return apiColorToDotClass(s.shootColor) ?? KIND_META[s.kind].dot;
 }
@@ -94,6 +112,7 @@ export function SchedulesClient() {
   const [bookings, setBookings] = useState<BookedShoot[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(true);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingToEdit, setBookingToEdit] = useState<BookedShoot | null>(null);
   const [shootTypesMeta, setShootTypesMeta] = useState<BookingShootTypeMeta[]>([]);
   const [legendMeta, setLegendMeta] = useState<BookingShootTypeMeta[]>([]);
   const [weekBookedCount, setWeekBookedCount] = useState<number | null>(null);
@@ -269,16 +288,7 @@ export function SchedulesClient() {
   }, [shoots]);
 
   async function handleSaveBooking(draft: NewBookingDraft) {
-    const { booking } = await createBooking({
-      title: draft.title,
-      clientId: draft.clientId,
-      date: draft.date,
-      shootType: kindToApiShootType(draft.kind),
-      start: formatHmToApi12h(draft.startTime),
-      end: draft.endTime ? formatHmToApi12h(draft.endTime) : "",
-      location: draft.location?.trim() ?? "",
-      description: draft.description?.trim() ?? "",
-    });
+    const { booking } = await createBooking(draftToCreateBookingBody(draft));
     const mapped = mapApiBookingToBookedShoot(booking);
     setBookings((prev) => {
       const rest = prev.filter((b) => b.id !== mapped.id);
@@ -297,6 +307,51 @@ export function SchedulesClient() {
         /* ignore */
       }
     })();
+  }
+
+  async function handleReplaceBooking(id: string, draft: NewBookingDraft) {
+    const { booking } = await replaceBooking(id, draftToCreateBookingBody(draft));
+    const mapped = mapApiBookingToBookedShoot(booking);
+    setBookings((prev) => {
+      const rest = prev.filter((b) => b.id !== mapped.id);
+      return [...rest, mapped];
+    });
+    const { y, m, d } = parseIso(draft.date);
+    setViewYear(y);
+    setViewMonth(m);
+    setSelectedDay(d);
+    showToast("Booking updated.", "success");
+    void (async () => {
+      try {
+        const w = await getBookingsWeekSummary();
+        setWeekBookedCount(w.bookedCount);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }
+
+  async function handleDeleteBooking(id: string) {
+    const ok = typeof window !== "undefined" ? window.confirm("Delete this booking? This cannot be undone.") : true;
+    if (!ok) return;
+    try {
+      await deleteBooking(id);
+      setBookings((prev) => prev.filter((b) => b.id !== id));
+      if (bookingToEdit?.id === id) setBookingToEdit(null);
+      showToast("Booking deleted.", "success");
+      void (async () => {
+        try {
+          const w = await getBookingsWeekSummary();
+          setWeekBookedCount(w.bookedCount);
+        } catch {
+          /* ignore */
+        }
+      })();
+    } catch (e) {
+      const msg =
+        e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Could not delete booking.";
+      showToast(msg, "error");
+    }
   }
 
   function filterChipLabel(k: ShootKind | "all"): string {
@@ -318,7 +373,10 @@ export function SchedulesClient() {
         </div>
         <button
           type="button"
-          onClick={() => setBookingModalOpen(true)}
+          onClick={() => {
+            setBookingToEdit(null);
+            setBookingModalOpen(true);
+          }}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
         >
           <Plus className="h-4 w-4" aria-hidden />
@@ -491,7 +549,10 @@ export function SchedulesClient() {
               </h3>
               <button
                 type="button"
-                onClick={() => setBookingModalOpen(true)}
+                onClick={() => {
+                  setBookingToEdit(null);
+                  setBookingModalOpen(true);
+                }}
                 className="shrink-0 rounded-lg border border-zinc-200 px-2 py-1 text-[11px] font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
                 Add
@@ -510,16 +571,37 @@ export function SchedulesClient() {
                       className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{s.title}</p>
-                        <span
-                          className={cn(
-                            "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
-                            meta.chip,
-                          )}
-                        >
-                          <Icon className="h-3 w-3" aria-hidden />
-                          {meta.label}
-                        </span>
+                        <p className="min-w-0 flex-1 text-sm font-semibold text-zinc-900 dark:text-zinc-50">{s.title}</p>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBookingToEdit(s);
+                              setBookingModalOpen(true);
+                            }}
+                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-brand dark:hover:bg-zinc-950 dark:hover:text-brand-on-dark"
+                            aria-label={`Edit ${s.title}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteBooking(s.id)}
+                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-red-600 dark:hover:bg-zinc-950 dark:hover:text-red-400"
+                            aria-label={`Delete ${s.title}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                          <span
+                            className={cn(
+                              "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
+                              meta.chip,
+                            )}
+                          >
+                            <Icon className="h-3 w-3" aria-hidden />
+                            {meta.label}
+                          </span>
+                        </div>
                       </div>
                       <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{s.clientName}</p>
                       <div className="mt-2 flex flex-col gap-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -551,7 +633,6 @@ export function SchedulesClient() {
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Month overview</h3>
             <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
               {upcomingSorted.map((s) => {
-                const meta = KIND_META[s.kind];
                 const when = new Date(s.date + "T12:00:00").toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
@@ -593,10 +674,15 @@ export function SchedulesClient() {
 
       <NewBookingModal
         open={bookingModalOpen}
-        onClose={() => setBookingModalOpen(false)}
+        onClose={() => {
+          setBookingModalOpen(false);
+          setBookingToEdit(null);
+        }}
         defaultDate={modalDefaultDate}
         shootTypes={shootTypesMeta}
+        bookingToEdit={bookingToEdit}
         onSave={handleSaveBooking}
+        onReplace={handleReplaceBooking}
       />
     </div>
   );
