@@ -8,6 +8,8 @@ export type ShareGalleryAsset = {
   thumbUrl: string;
   /** Larger / display-quality URL for full-screen preview when distinct from {@link thumbUrl}. */
   previewUrl?: string;
+  /** MIME type of the original upload when provided (e.g. image/jpeg, video/mp4). */
+  mimeType?: string;
   selection: "SELECTED" | "UNSELECTED";
 };
 
@@ -163,6 +165,12 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
   const largeResolved = largePreview ? resolvePublicGalleryImageUrl(largePreview) : "";
   const previewUrl =
     largeResolved && largeResolved !== thumbUrl ? largeResolved : undefined;
+  const mimeType =
+    str(o.mimeType) ||
+    str(o.mime_type) ||
+    str(o.contentType) ||
+    str(o.content_type) ||
+    "";
 
   const sel = str(o.selection).toUpperCase();
   const selected =
@@ -175,6 +183,7 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
     originalName,
     thumbUrl,
     ...(previewUrl ? { previewUrl } : {}),
+    ...(mimeType ? { mimeType } : {}),
     selection: selected ? "SELECTED" : "UNSELECTED",
   };
 }

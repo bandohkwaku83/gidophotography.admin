@@ -12,6 +12,8 @@ export type DemoAsset = {
   thumbUrl: string;
   /** Full-screen preview URL when better than {@link thumbUrl} (share galleries / API). */
   previewUrl?: string;
+  /** MIME type when the API provides it, e.g. image/jpeg or video/mp4. */
+  mimeType?: string;
   editedPreviewUrl?: string;
 };
 
@@ -19,6 +21,8 @@ export type DemoFinalAsset = {
   id: string;
   name: string;
   url: string;
+  /** MIME type when the API provides it, e.g. image/jpeg or video/mp4. */
+  mimeType?: string;
   /** Payment lock — client share hides full-res download until unlock. */
   locked?: boolean;
 };

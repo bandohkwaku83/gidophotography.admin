@@ -1,22 +1,40 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderOpen, Plus, Sparkles } from "lucide-react";
+import { FolderOpen, Plus, Search, Sparkles, X } from "lucide-react";
 import { FolderCard } from "@/components/photographer/folder-card";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import { CreateFolderModal } from "@/components/photographer/create-folder-modal";
 import { useToast } from "@/components/toast-provider";
-import { deleteFolder, listFolders, FoldersApiError, formatRestoreBeforeLabel, type ApiFolder } from "@/lib/folders-api";
+import {
+  apiFolderStatusToUi,
+  deleteFolder,
+  listFolders,
+  FoldersApiError,
+  formatRestoreBeforeLabel,
+  type ApiFolder,
+} from "@/lib/folders-api";
 import { listClients } from "@/lib/clients-api";
 import { GalleryCardSkeleton, ListRefreshSkeleton } from "@/components/ui/skeletons";
+import type { FolderStatus } from "@/lib/demo-data";
+
+type GalleryStatusFilter = "all" | FolderStatus;
+
+const STATUS_FILTERS: { key: GalleryStatusFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "DRAFT", label: "Draft" },
+  { key: "SELECTION_PENDING", label: "Selecting" },
+  { key: "COMPLETED", label: "Done" },
+];
 
 export default function GalleriesPage() {
-  const { query } = useFolderListSearch();
+  const { query, setQuery } = useFolderListSearch();
   const { showToast } = useToast();
 
   const [folders, setFolders] = useState<ApiFolder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<GalleryStatusFilter>("all");
 
   const [clientNameById, setClientNameById] = useState<Map<string, string>>(
     new Map(),
@@ -109,7 +127,15 @@ export default function GalleriesPage() {
     [pendingDeleteId, showToast],
   );
 
-  const showEmpty = !loading && folders.length === 0;
+  const visibleFolders = useMemo(
+    () =>
+      statusFilter === "all"
+        ? folders
+        : folders.filter((folder) => apiFolderStatusToUi(folder.status) === statusFilter),
+    [folders, statusFilter],
+  );
+
+  const showEmpty = !loading && visibleFolders.length === 0;
   const showSpinner = loading && folders.length === 0;
   const trimmed = useMemo(() => query.trim(), [query]);
 
@@ -165,8 +191,56 @@ export default function GalleriesPage() {
         </div>
       ) : null}
 
+      <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-md">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+            aria-hidden="true"
+          />
+          <input
+            id="gallery-page-search"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search galleries"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-10 text-sm text-zinc-900 outline-none ring-brand/35 transition placeholder:text-zinc-400 focus:border-brand focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50 dark:ring-brand/40 dark:placeholder:text-zinc-500"
+            aria-label="Search galleries"
+          />
+          {query ? (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              aria-label="Clear gallery search"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter galleries by status">
+          {STATUS_FILTERS.map((filter) => {
+            const active = statusFilter === filter.key;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setStatusFilter(filter.key)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  active
+                    ? "bg-brand text-white"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       {showSpinner ? (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <GalleryCardSkeleton key={i} />
           ))}
@@ -177,14 +251,16 @@ export default function GalleriesPage() {
             <FolderOpen className="h-8 w-8" aria-hidden="true" />
           </div>
           <h2 className="mt-5 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            {trimmed ? "No matches" : "Create your first gallery"}
+            {trimmed || statusFilter !== "all" ? "No matches" : "Create your first gallery"}
           </h2>
           <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
             {trimmed
               ? "Try another search, or clear the search box to see all galleries."
+              : statusFilter !== "all"
+                ? "No galleries match this status filter yet."
               : "Galleries hold raws, client picks, and finals. Add one to get started."}
           </p>
-          {!trimmed ? (
+          {!trimmed && statusFilter === "all" ? (
             <button
               type="button"
               onClick={openCreate}
@@ -196,8 +272,8 @@ export default function GalleriesPage() {
           ) : null}
         </div>
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {folders.map((g) => (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {visibleFolders.map((g) => (
             <FolderCard
               key={g._id}
               folder={g}

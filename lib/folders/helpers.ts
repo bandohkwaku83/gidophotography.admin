@@ -163,11 +163,21 @@ function apiEditStatusToUi(s?: string): "NONE" | "IN_PROGRESS" | "EDITED" {
   return "NONE";
 }
 
+function apiMediaMimeType(m: ApiFolderMedia): string {
+  const o = m as Record<string, unknown>;
+  for (const key of ["mimeType", "mime_type", "contentType", "content_type", "mimetype", "mime"]) {
+    const value = o[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 /** Map API media row → in-app DemoAsset shape for folder detail UI. */
 export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
   const id = m._id || m.id || `m-${Math.random().toString(36).slice(2, 10)}`;
   const originalName =
     m.originalName || m.originalFilename || m.filename || m.name || "Photo";
+  const mimeType = apiMediaMimeType(m);
   const thumbRaw =
     m.thumbUrl ||
     m.thumbnailUrl ||
@@ -189,6 +199,7 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
     clientComment: m.clientComment || m.comment || "",
     hasEdited: false,
     thumbUrl,
+    ...(mimeType ? { mimeType } : {}),
   };
 }
 
@@ -267,6 +278,7 @@ export function folderFinalsPaymentLocked(folder: ApiFolder): boolean {
 export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
   const id = m._id || m.id || `f-${Math.random().toString(36).slice(2, 10)}`;
   const name = m.originalName || m.originalFilename || m.filename || m.name || "Final";
+  const mimeType = apiMediaMimeType(m);
   const urlRaw = m.url || m.previewUrl || m.thumbUrl || "";
   const url = resolveCoverUrl(urlRaw) || urlRaw || "";
   const o = m as Record<string, unknown>;
@@ -293,7 +305,7 @@ export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
     truthyFlag(o.downloadLocked) ||
     truthyFlag(o.download_locked) ||
     lockStatus.toLowerCase() === "locked";
-  return { id, name, url, locked };
+  return { id, name, url, ...(mimeType ? { mimeType } : {}), locked };
 }
 
 /**

@@ -38,6 +38,11 @@ export type ApiFolderMedia = {
   thumbUrl?: string;
   thumbnailUrl?: string;
   previewUrl?: string;
+  /** MIME/content type for image and video handling. */
+  mimeType?: string;
+  mime_type?: string;
+  contentType?: string;
+  content_type?: string;
   image?: string;
   selected?: boolean;
   selection?: string;

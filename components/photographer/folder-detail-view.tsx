@@ -17,6 +17,7 @@ import {
   Music2,
   Images,
   Package,
+  PlayCircle,
   Share2,
   Sparkles,
   Trash2,
@@ -30,6 +31,10 @@ import { useToast } from "@/components/toast-provider";
 import { cn } from "@/lib/utils";
 import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
 import { UploadDragger } from "@/components/photographer/upload-dragger";
+import {
+  isDemoAssetVideo,
+  isDemoFinalAssetVideo,
+} from "@/components/client/share-gallery-bits";
 import {
   DuplicateUploadConflictDialog,
   type DuplicateUploadConflictPrompt,
@@ -110,6 +115,54 @@ function finalUploadFormOptions(
     opts.lockImagesBeforeUpload = delivery.lockImagesBeforeUpload === true;
   }
   return opts;
+}
+
+function AdminMediaPreview({
+  src,
+  name,
+  isVideo,
+  variant = "tile",
+  zoom = 1,
+}: {
+  src: string;
+  name: string;
+  isVideo: boolean;
+  variant?: "tile" | "lightbox";
+  zoom?: number;
+}) {
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        controls={variant === "lightbox"}
+        muted={variant === "tile"}
+        playsInline
+        preload="metadata"
+        aria-label={name}
+        className={
+          variant === "tile"
+            ? "pointer-events-none h-full w-full bg-black object-cover"
+            : "max-h-[75vh] max-w-full bg-black object-contain transition-transform duration-200"
+        }
+        style={variant === "lightbox" ? { transform: `scale(${zoom})` } : undefined}
+      />
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={variant === "tile" ? "" : name}
+      className={
+        variant === "tile"
+          ? "pointer-events-none h-full w-full object-cover"
+          : "max-h-[75vh] max-w-full object-contain transition-transform duration-200"
+      }
+      loading={variant === "tile" ? "lazy" : undefined}
+      style={variant === "lightbox" ? { transform: `scale(${zoom})` } : undefined}
+    />
+  );
 }
 
 type Tab = "uploads" | "selection" | "finals";
@@ -257,19 +310,30 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return picked.length > 0 ? picked : selectionRows;
   }, [selectionRows]);
 
-  type FolderLightboxItem = { id: string; name: string; src: string };
+  type FolderLightboxItem = { id: string; name: string; src: string; isVideo: boolean };
   const lightboxNavItems = useMemo((): FolderLightboxItem[] => {
     if (tab === "uploads") {
-      return rawAssets.map((a) => ({ id: a.id, name: a.originalName, src: a.thumbUrl }));
+      return rawAssets.map((a) => ({
+        id: a.id,
+        name: a.originalName,
+        src: a.previewUrl ?? a.thumbUrl,
+        isVideo: isDemoAssetVideo(a),
+      }));
     }
     if (tab === "selection") {
       return clientSelectedAssets.map((a) => ({
         id: a.id,
         name: a.originalName,
-        src: a.thumbUrl,
+        src: a.previewUrl ?? a.thumbUrl,
+        isVideo: isDemoAssetVideo(a),
       }));
     }
-    return finalAssets.map((f) => ({ id: f.id, name: f.name, src: f.url }));
+    return finalAssets.map((f) => ({
+      id: f.id,
+      name: f.name,
+      src: f.url,
+      isVideo: isDemoFinalAssetVideo(f),
+    }));
   }, [tab, rawAssets, clientSelectedAssets, finalAssets]);
 
   const [lightboxId, setLightboxId] = useState<string | null>(null);
@@ -1720,7 +1784,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 </div>
               ) : null}
             </div>
-            <UploadDragger disabled={busy} onFiles={(files) => void onRawUpload(files)} />
+            <UploadDragger
+              label="Drop raw files here"
+              hint="Images (JPG, PNG, WebP, GIF) or video (MP4, MOV, WebM, etc.)."
+              accept="image/jpeg,image/png,image/webp,image/gif,video/*"
+              disabled={busy}
+              onFiles={(files) => void onRawUpload(files)}
+            />
             {rawAssets.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 py-14 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
                 <Images className="h-8 w-8 text-zinc-300 dark:text-zinc-600" aria-hidden />
@@ -1758,13 +1828,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         }}
                         aria-label={`Preview ${a.originalName}`}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={a.thumbUrl}
-                          alt=""
-                          className="pointer-events-none h-full w-full object-cover"
-                          loading="lazy"
+                        <AdminMediaPreview
+                          src={a.previewUrl ?? a.thumbUrl}
+                          name={a.originalName}
+                          isVideo={isDemoAssetVideo(a)}
                         />
+                        {isDemoAssetVideo(a) ? (
+                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                            <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
+                          </span>
+                        ) : null}
                       </button>
                     </div>
                     <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
@@ -1830,13 +1903,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         }}
                         aria-label={`Preview ${a.originalName}`}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={a.thumbUrl}
-                          alt=""
-                          className="pointer-events-none h-full w-full object-cover"
-                          loading="lazy"
+                        <AdminMediaPreview
+                          src={a.previewUrl ?? a.thumbUrl}
+                          name={a.originalName}
+                          isVideo={isDemoAssetVideo(a)}
                         />
+                        {isDemoAssetVideo(a) ? (
+                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                            <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
+                          </span>
+                        ) : null}
                       </button>
                     </div>
                     <div className="space-y-2 border-t border-zinc-100 p-3 text-xs dark:border-zinc-800">
@@ -2001,13 +2077,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         }}
                         aria-label={`Preview ${f.name}`}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
+                        <AdminMediaPreview
                           src={f.url}
-                          alt=""
-                          className="pointer-events-none h-full w-full object-cover"
-                          loading="lazy"
+                          name={f.name}
+                          isVideo={isDemoFinalAssetVideo(f)}
                         />
+                        {isDemoFinalAssetVideo(f) ? (
+                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                            <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
+                          </span>
+                        ) : null}
                       </button>
                       {f.locked ? (
                         <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -2250,12 +2329,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               </button>
             </div>
             <div className="flex flex-1 items-center justify-center overflow-auto">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <AdminMediaPreview
                 src={lbItem.src}
-                alt={lbItem.name}
-                className="max-h-[75vh] max-w-full object-contain transition-transform duration-200"
-                style={{ transform: `scale(${lightboxZoom})` }}
+                name={lbItem.name}
+                isVideo={lbItem.isVideo}
+                variant="lightbox"
+                zoom={lightboxZoom}
               />
             </div>
             <div className="flex items-center gap-4 text-white">
