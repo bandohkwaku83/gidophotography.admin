@@ -14,6 +14,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import { DashboardPage as DashboardPageLayout } from "@/components/photographer/dashboard-page";
 import {
   activityItemToLabel,
   DASHBOARD_HOME_LIST_LIMIT,
@@ -329,7 +330,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="relative mx-auto max-w-6xl space-y-8">
+    <DashboardPageLayout className="relative space-y-8">
       <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#2F3E46] px-4 py-4 shadow-md shadow-black/20 sm:px-5 sm:py-5 dark:border-white/10">
         <div className="relative text-center lg:text-left">
           <div className="min-w-0">
@@ -533,6 +534,6 @@ export default function DashboardPage() {
           void refresh();
         }}
       />
-    </div>
+    </DashboardPageLayout>
   );
 }

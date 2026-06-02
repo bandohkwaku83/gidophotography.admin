@@ -11,9 +11,9 @@ type Props = {
 };
 
 export function UploadDragger({
-  label = "Drag & drop files here",
-  hint = "or click to browse — JPG, PNG, WebP, GIF, MP4, MOV, WebM",
-  accept = "image/jpeg,image/png,image/webp,image/gif,video/*",
+  label = "Drag & drop images here",
+  hint = "or click to browse — JPG, PNG, WebP, GIF",
+  accept = "image/jpeg,image/png,image/webp,image/gif",
   disabled,
   onFiles,
 }: Props) {

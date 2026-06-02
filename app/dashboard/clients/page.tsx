@@ -4,6 +4,7 @@ import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Skeleton, Space, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { CreateClientModal } from "@/components/photographer/create-client-modal";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import { useToast } from "@/components/toast-provider";
@@ -184,7 +185,7 @@ export default function ClientsPage() {
     : "No clients yet.";
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <DashboardPage className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -254,6 +255,6 @@ export default function ClientsPage() {
         }}
         onSaved={handleSaved}
       />
-    </div>
+    </DashboardPage>
   );
 }

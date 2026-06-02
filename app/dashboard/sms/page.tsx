@@ -13,6 +13,7 @@ import {
 import { Alert, Button, Input, Modal, Select, Spin, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { useToast } from "@/components/toast-provider";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import type { ApiClient } from "@/lib/clients-api";
@@ -464,7 +465,7 @@ export default function SmsPage() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <DashboardPage className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -708,6 +709,6 @@ export default function SmsPage() {
           </Button>
         </div>
       </Modal>
-    </div>
+    </DashboardPage>
   );
 }

@@ -9,6 +9,7 @@ import {
 import {
   type ApiFolder,
   type ApiFolderMedia,
+  type ApiFolderSet,
   type BulkMediaSoftDeleteResult,
   type CreateFolderInput,
   type DuplicateUploadAction,
@@ -837,12 +838,25 @@ export async function getShareLinkExpiryPresets(): Promise<ShareLinkExpiryPreset
 
 export async function patchFolderShare(
   folderId: string,
-  input: { selectionLocked?: boolean; clearSelectionSubmit?: boolean },
+  input: {
+    selectionLocked?: boolean;
+    clearSelectionSubmit?: boolean;
+    /** `null` clears the cap (unlimited). */
+    maxClientSelections?: number | null;
+  },
 ): Promise<ApiFolder> {
+  const payload: Record<string, unknown> = {};
+  if (input.selectionLocked !== undefined) payload.selectionLocked = input.selectionLocked;
+  if (input.clearSelectionSubmit !== undefined) {
+    payload.clearSelectionSubmit = input.clearSelectionSubmit;
+  }
+  if (input.maxClientSelections !== undefined) {
+    payload.maxClientSelections = input.maxClientSelections;
+  }
   const res = await authedFetch(`/api/folders/${encodeURIComponent(folderId)}/share`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   });
   const body = await parseJson(res);
   if (!res.ok) {
@@ -857,6 +871,8 @@ export async function patchFolderShare(
 
 /** Optional FormData fields for folder raw/final uploads (`duplicateAction`, `uploadComplete`). */
 export type UploadFolderMediaFormOptions = {
+  /** Target sub-gallery for raw uploads; omit or null = General (uncategorized). */
+  setId?: string | null;
   duplicateAction?: DuplicateUploadAction;
   /**
    * When true, each HTTP upload sends explicit `uploadComplete`: `false` on all but the last
@@ -947,30 +963,38 @@ function readConflictingFilenamesFromDuplicatePreview(body: unknown): string[] |
  */
 export async function postFolderMediaDuplicatePreview(
   folderId: string,
-  input: { kind: FolderMediaDuplicatePreviewKind; filenames: string[] },
+  input: {
+    kind: FolderMediaDuplicatePreviewKind;
+    filenames: string[];
+    setId?: string | null;
+  },
 ): Promise<{ hasConflicts: boolean; conflictingFilenames?: string[] }> {
+  const requestBody: Record<string, unknown> = {
+    kind: input.kind,
+    filenames: input.filenames,
+  };
+  if (input.setId !== undefined) {
+    requestBody.setId = input.setId;
+  }
   const res = await authedFetch(
     `/api/folders/${encodeURIComponent(folderId)}/media/duplicate-preview`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: input.kind,
-        filenames: input.filenames,
-      }),
+      body: JSON.stringify(requestBody),
     },
   );
-  const body = await parseJson(res);
+  const responseBody = await parseJson(res);
   if (!res.ok) {
     throw new FoldersApiError(
-      extractMessage(body, `Duplicate preview failed (${res.status})`),
+      extractMessage(responseBody, `Duplicate preview failed (${res.status})`),
       res.status,
-      body,
+      responseBody,
     );
   }
-  const apiNames = readConflictingFilenamesFromDuplicatePreview(body);
+  const apiNames = readConflictingFilenamesFromDuplicatePreview(responseBody);
   return {
-    hasConflicts: readHasConflicts(body),
+    hasConflicts: readHasConflicts(responseBody),
     ...(apiNames?.length ? { conflictingFilenames: apiNames } : {}),
   };
 }
@@ -1004,6 +1028,9 @@ function appendFolderUploadFormFields(
   fileIndex: number,
   fileCount: number,
 ): void {
+  if (opts?.setId !== undefined) {
+    fd.append("setId", opts.setId == null ? "" : opts.setId);
+  }
   if (opts?.duplicateAction) {
     fd.append("duplicateAction", opts.duplicateAction);
   }
@@ -1252,4 +1279,146 @@ export async function patchFolderStatus(folderId: string, status: string): Promi
     );
   }
   return unwrapFolder(body);
+}
+
+function mergeSetsIntoFolder(folder: ApiFolder, body: unknown): ApiFolder {
+  if (!body || typeof body !== "object") return folder;
+  const o = body as Record<string, unknown>;
+  const nested =
+    o.folder && typeof o.folder === "object" ? (o.folder as Record<string, unknown>) : o;
+  const sets = nested.sets;
+  if (!Array.isArray(sets)) return folder;
+  return {
+    ...folder,
+    sets: sets as ApiFolder["sets"],
+    generalMediaCount:
+      typeof nested.generalMediaCount === "number"
+        ? nested.generalMediaCount
+        : folder.generalMediaCount,
+    totalRawMediaCount:
+      typeof nested.totalRawMediaCount === "number"
+        ? nested.totalRawMediaCount
+        : folder.totalRawMediaCount,
+  };
+}
+
+function normalizeFolderSet(row: unknown): ApiFolderSet | null {
+  if (!row || typeof row !== "object") return null;
+  const o = row as Record<string, unknown>;
+  const id = typeof o._id === "string" ? o._id.trim() : "";
+  const name = typeof o.name === "string" ? o.name.trim() : "";
+  if (!id || !name) return null;
+  return {
+    _id: id,
+    name,
+    sortOrder: typeof o.sortOrder === "number" ? o.sortOrder : undefined,
+    mediaCount: typeof o.mediaCount === "number" ? o.mediaCount : undefined,
+    rawCount: typeof o.rawCount === "number" ? o.rawCount : undefined,
+    selectionCount: typeof o.selectionCount === "number" ? o.selectionCount : undefined,
+    finalCount: typeof o.finalCount === "number" ? o.finalCount : undefined,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
+    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,
+  };
+}
+
+export async function listFolderSets(folderId: string): Promise<ApiFolderSet[]> {
+  const res = await authedFetch(`/api/folders/${encodeURIComponent(folderId)}/sets`, {
+    method: "GET",
+  });
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to list sets (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  const root = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const nested =
+    root.folder && typeof root.folder === "object"
+      ? (root.folder as Record<string, unknown>)
+      : root;
+  const rawSets =
+    (Array.isArray(nested.sets) ? nested.sets : null) ??
+    (Array.isArray(root.sets) ? root.sets : null) ??
+    (Array.isArray(body) ? body : null) ??
+    [];
+  const sets = rawSets.map(normalizeFolderSet).filter((s): s is ApiFolderSet => !!s);
+  return sets.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+}
+
+export async function createFolderSet(
+  folderId: string,
+  name: string,
+): Promise<{ folder: ApiFolder; set: ApiFolderSet }> {
+  const res = await authedFetch(`/api/folders/${encodeURIComponent(folderId)}/sets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to create set (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  const folder = await getFolder(folderId);
+  const setRaw =
+    body && typeof body === "object" && "set" in body
+      ? normalizeFolderSet((body as { set: unknown }).set)
+      : null;
+  if (!setRaw?._id) {
+    const sets = await listFolderSets(folderId);
+    const exact = sets.find((s) => s.name === name.trim());
+    const fallback = exact ?? sets[sets.length - 1];
+    if (!fallback) {
+      throw new FoldersApiError("Unexpected response from server.", res.status, body);
+    }
+    return { folder: mergeSetsIntoFolder(folder, body), set: fallback };
+  }
+  return { folder: mergeSetsIntoFolder(folder, body), set: setRaw };
+}
+
+export async function updateFolderSet(
+  folderId: string,
+  setId: string,
+  input: { name?: string; sortOrder?: number },
+): Promise<ApiFolder> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/sets/${encodeURIComponent(setId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to update set (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  const folder = await getFolder(folderId);
+  return mergeSetsIntoFolder(folder, body);
+}
+
+export async function deleteFolderSet(folderId: string, setId: string): Promise<ApiFolder> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/sets/${encodeURIComponent(setId)}`,
+    { method: "DELETE" },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to delete set (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  const folder = await getFolder(folderId);
+  return mergeSetsIntoFolder(folder, body);
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import {
   CalendarDays,
@@ -9,8 +10,8 @@ import {
   Heart,
   Loader2,
   Lock,
+  MoreVertical,
   PlayCircle,
-  Send,
   Share2,
   Volume2,
   VolumeX,
@@ -18,6 +19,7 @@ import {
 import {
   clientInitials,
   editedCardClass,
+  GalleryViewMoreButton,
   finalDisplaySrc,
   GALLERY_MUSIC_MUTE_PREFIX,
   GRID_LAYOUTS,
@@ -26,7 +28,8 @@ import {
   isGridLayout,
   isDemoAssetVideo,
   isShareFinalVideo,
-  SELECTED_STRIP_IMAGE_SIZES,
+  SHARE_GALLERY_INITIAL_VISIBLE,
+  SHARE_GALLERY_LOAD_MORE_COUNT,
   SHARE_GRID_IMAGE_QUALITY,
   SHARE_LIGHTBOX_IMAGE_QUALITY,
   SHARE_LIGHTBOX_SIZES,
@@ -36,10 +39,19 @@ import {
   uploadItemClass,
   type GridLayout,
 } from "@/components/client/share-gallery-bits";
+import { ShareGalleryMasonryList, useMasonryColumnCount } from "@/components/client/share-gallery-masonry";
 import { useToast } from "@/components/toast-provider";
-import { ClientGalleryPageSkeleton, InlineStatusSkeleton } from "@/components/ui/skeletons";
+import { ClientGalleryPageSkeleton } from "@/components/ui/skeletons";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
 import { folderCoverObjectPositionStyle, type ApiFolder } from "@/lib/folders-api";
+import {
+  STUDIO_LOGO_SRC,
+  STUDIO_NAME,
+  STUDIO_TAGLINE,
+  STUDIO_WEBSITE_URL,
+  STUDIO_WEDDINGS_LOGO_SRC,
+} from "@/lib/branding";
+import { filterAssetsBySetView } from "@/lib/folders/helpers";
 import {
   fetchShareFinalDownloadBlob,
   tryNavigatorShareFinalPhoto,
@@ -48,9 +60,9 @@ import {
   downloadShareFinalsZip,
   type NormalizedShareGallery,
   ShareGalleryError,
-  submitShareGallerySelectionsToPhotographer,
   syncShareGallerySelections,
   type ShareGalleryFinal,
+  type ShareGallerySet,
 } from "@/lib/share-gallery-api";
 import { usePreferInlineFinalSave } from "@/lib/use-prefer-inline-final-save";
 import { useShareSaveHints } from "@/lib/use-share-save-hints";
@@ -63,6 +75,8 @@ function VideoTileOverlay() {
     </span>
   );
 }
+
+type CollectionFilter = "all" | string;
 
 function tileActionClass(active = false): string {
   return cn(
@@ -81,10 +95,18 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [finalLightboxId, setFinalLightboxId] = useState<string | null>(null);
   const [coverLightboxOpen, setCoverLightboxOpen] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [photoTab, setPhotoTab] = useState<"all" | "selected" | "edited">("all");
+  const [collectionFilter, setCollectionFilter] = useState<CollectionFilter>("all");
   const [zoom, setZoom] = useState(1);
   const [gridLayout, setGridLayout] = useState<GridLayout>("masonry");
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const layoutMenuRef = useRef<HTMLDivElement>(null);
+  const layoutMenuPanelRef = useRef<HTMLDivElement>(null);
+  const layoutMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const [layoutMenuPosition, setLayoutMenuPosition] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
   const [downloadAllFinalsBusy, setDownloadAllFinalsBusy] = useState(false);
   const [finalSaveBusyId, setFinalSaveBusyId] = useState<string | null>(null);
   const [photoSaveAssist, setPhotoSaveAssist] = useState<{
@@ -92,6 +114,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
     label: string;
     suggestOpenExternally: boolean;
   } | null>(null);
+  const [visibleMediaLimit, setVisibleMediaLimit] = useState(SHARE_GALLERY_INITIAL_VISIBLE);
 
   const preferInlineFinalSave = usePreferInlineFinalSave();
   const shareHints = useShareSaveHints();
@@ -107,7 +130,13 @@ export function ClientGalleryApp({ token }: { token: string }) {
 
   useEffect(() => {
     initialPhotoTabAppliedRef.current = false;
+    setCollectionFilter("all");
+    setVisibleMediaLimit(SHARE_GALLERY_INITIAL_VISIBLE);
   }, [token]);
+
+  useEffect(() => {
+    setVisibleMediaLimit(SHARE_GALLERY_INITIAL_VISIBLE);
+  }, [photoTab, collectionFilter]);
 
   useEffect(() => {
     try {
@@ -117,6 +146,52 @@ export function ClientGalleryApp({ token }: { token: string }) {
       /* ignore */
     }
   }, [token]);
+
+  const updateLayoutMenuPosition = useCallback(() => {
+    const button = layoutMenuButtonRef.current;
+    if (!button) {
+      setLayoutMenuPosition(null);
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    setLayoutMenuPosition({
+      top: rect.bottom + 6,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!layoutMenuOpen) {
+      setLayoutMenuPosition(null);
+      return;
+    }
+    updateLayoutMenuPosition();
+    window.addEventListener("resize", updateLayoutMenuPosition);
+    window.addEventListener("scroll", updateLayoutMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateLayoutMenuPosition);
+      window.removeEventListener("scroll", updateLayoutMenuPosition, true);
+    };
+  }, [layoutMenuOpen, updateLayoutMenuPosition]);
+
+  useEffect(() => {
+    if (!layoutMenuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node;
+      if (layoutMenuRef.current?.contains(target)) return;
+      if (layoutMenuPanelRef.current?.contains(target)) return;
+      setLayoutMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setLayoutMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [layoutMenuOpen]);
 
   useEffect(() => {
     try {
@@ -303,25 +378,75 @@ export function ClientGalleryApp({ token }: { token: string }) {
   }, [gallery]);
 
   const showFinalsTab = gallery ? gallery.finalDelivery !== false : true;
+  const gallerySets = gallery?.sets ?? [];
+  const hasCollections = gallerySets.length > 0;
 
   const selectedCount = assets.filter((a) => a.selection === "SELECTED").length;
+  const maxClientSelections = gallery?.maxClientSelections ?? null;
+  const selectionAtLimit =
+    maxClientSelections != null && selectedCount >= maxClientSelections;
   const editedCount = gallery?.finals.length ?? 0;
   const uploadsCount = gallery?.counts?.uploads ?? assets.length;
 
-  const selectedAssets = useMemo(
-    () => assets.filter((a) => a.selection === "SELECTED"),
-    [assets],
-  );
-
-  const visibleAssets = useMemo(() => {
+  const tabAssets = useMemo(() => {
     if (photoTab === "selected") return assets.filter((a) => a.selection === "SELECTED");
     if (photoTab === "edited") return [];
     return assets;
   }, [assets, photoTab]);
 
+  const visibleAssets = useMemo(() => {
+    if (!hasCollections) return tabAssets;
+    return filterAssetsBySetView(tabAssets, collectionFilter);
+  }, [tabAssets, hasCollections, collectionFilter]);
+
+  const visibleFinals = useMemo(() => {
+    if (!gallery) return [];
+    if (!hasCollections) return gallery.finals;
+    return filterAssetsBySetView(gallery.finals, collectionFilter);
+  }, [gallery, hasCollections, collectionFilter]);
+
+  const displayedFinals = useMemo(
+    () => visibleFinals.slice(0, visibleMediaLimit),
+    [visibleFinals, visibleMediaLimit],
+  );
+
+  const displayedAssets = useMemo(
+    () => visibleAssets.slice(0, visibleMediaLimit),
+    [visibleAssets, visibleMediaLimit],
+  );
+
+  const hasMoreFinals = visibleFinals.length > visibleMediaLimit;
+  const hasMoreAssets = visibleAssets.length > visibleMediaLimit;
+  const remainingFinalsCount = Math.max(0, visibleFinals.length - visibleMediaLimit);
+  const remainingAssetsCount = Math.max(0, visibleAssets.length - visibleMediaLimit);
+
+  const loadMoreGalleryMedia = useCallback(() => {
+    setVisibleMediaLimit((n) => n + SHARE_GALLERY_LOAD_MORE_COUNT);
+  }, []);
+
+  const masonryColumnCount = useMasonryColumnCount();
+  const masonryResetKey = `${token}:${photoTab}:${collectionFilter}`;
+  const isMasonryLayout = gridLayout === "masonry";
+
   const downloadableFinals = useMemo(
-    () => (gallery ? gallery.finals.filter((f) => !f.locked) : []),
-    [gallery],
+    () => visibleFinals.filter((f) => !f.locked),
+    [visibleFinals],
+  );
+
+  const getCollectionSetCount = useCallback(
+    (set: ShareGallerySet) => {
+      if (photoTab === "edited") {
+        if (typeof set.finalCount === "number") return set.finalCount;
+        return gallery?.finals.filter((f) => f.setId === set._id).length ?? 0;
+      }
+      if (photoTab === "selected") {
+        if (typeof set.selectionCount === "number") return set.selectionCount;
+        return assets.filter((a) => a.selection === "SELECTED" && a.setId === set._id).length;
+      }
+      if (typeof set.rawCount === "number") return set.rawCount;
+      return assets.filter((a) => a.setId === set._id).length;
+    },
+    [photoTab, gallery, assets],
   );
 
   /** One place for coarse-pointer final Save / Share wording (Share sheet vs in‑app browsers). */
@@ -495,6 +620,18 @@ export function ClientGalleryApp({ token }: { token: string }) {
 
   async function toggleSelect(id: string) {
     if (editingLocked || syncBusy) return;
+    const asset = assets.find((a) => a.id === id);
+    if (!asset) return;
+    if (asset.selection !== "SELECTED") {
+      const max = gallery?.maxClientSelections;
+      if (max != null && selectedCount >= max) {
+        showToast(
+          `You can select up to ${max} photo${max === 1 ? "" : "s"}.`,
+          "error",
+        );
+        return;
+      }
+    }
     const nextAssets: DemoAsset[] = assets.map((a) =>
       a.id === id
         ? {
@@ -505,35 +642,26 @@ export function ClientGalleryApp({ token }: { token: string }) {
         : a,
     );
     const selectedIds = nextAssets.filter((a) => a.selection === "SELECTED").map((a) => a.id);
+    const previousAssets = assets;
     setAssets(nextAssets);
     setSyncBusy(true);
     try {
       await syncShareGallerySelections(token, selectedIds);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Could not update selection.", "error");
+      setAssets(previousAssets);
+      showToast(
+        e instanceof ShareGalleryError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not update selection.",
+        "error",
+      );
       try {
         await refetchGallery();
       } catch {
         /* ignore */
       }
-    } finally {
-      setSyncBusy(false);
-    }
-  }
-
-  async function submitSelections() {
-    const isUpdate = Boolean(gallery?.selectionSubmitted);
-    setSyncBusy(true);
-    try {
-      await submitShareGallerySelectionsToPhotographer(token);
-      await refetchGallery();
-      setConfirmOpen(false);
-      showToast(
-        isUpdate ? "Updated selection sent to your photographer." : "Selections submitted.",
-        "success",
-      );
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Could not submit.", "error");
     } finally {
       setSyncBusy(false);
     }
@@ -547,10 +675,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
 
   const finalLb =
     gallery && finalLightboxId
-      ? gallery.finals.find((f) => f.id === finalLightboxId) ?? null
+      ? visibleFinals.find((f) => f.id === finalLightboxId) ?? null
       : null;
   const finalLbIndex =
-    finalLb && gallery ? gallery.finals.findIndex((f) => f.id === finalLb.id) : -1;
+    finalLb && gallery ? visibleFinals.findIndex((f) => f.id === finalLb.id) : -1;
 
   useEffect(() => {
     if (photoTab !== "edited") setFinalLightboxId(null);
@@ -560,11 +688,11 @@ export function ClientGalleryApp({ token }: { token: string }) {
     if (
       finalLightboxId &&
       gallery &&
-      !gallery.finals.some((f) => f.id === finalLightboxId)
+      !visibleFinals.some((f) => f.id === finalLightboxId)
     ) {
       setFinalLightboxId(null);
     }
-  }, [finalLightboxId, gallery]);
+  }, [finalLightboxId, gallery, visibleFinals]);
 
   useEffect(() => {
     if (!lightboxId && !finalLightboxId && !coverLightboxOpen) return;
@@ -583,10 +711,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         if (coverLightboxOpen) return;
 
-        if (finalLightboxId && gallery && gallery.finals.length > 0) {
+        if (finalLightboxId && gallery && visibleFinals.length > 0) {
           if (e.key === "ArrowLeft" && finalLbIndex > 0) {
             e.preventDefault();
-            const prev = gallery.finals[finalLbIndex - 1];
+            const prev = visibleFinals[finalLbIndex - 1];
             if (prev) {
               setFinalLightboxId(prev.id);
               setZoom(1);
@@ -594,10 +722,10 @@ export function ClientGalleryApp({ token }: { token: string }) {
           } else if (
             e.key === "ArrowRight" &&
             finalLbIndex >= 0 &&
-            finalLbIndex < gallery.finals.length - 1
+            finalLbIndex < visibleFinals.length - 1
           ) {
             e.preventDefault();
-            const next = gallery.finals[finalLbIndex + 1];
+            const next = visibleFinals[finalLbIndex + 1];
             if (next) {
               setFinalLightboxId(next.id);
               setZoom(1);
@@ -796,27 +924,6 @@ export function ClientGalleryApp({ token }: { token: string }) {
                   priority
                 />
               </div>
-              {!editingLocked && photoTab !== "edited" ? (
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
-                  <span className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/70 px-4 py-2 text-xs font-semibold text-zinc-800 shadow-sm backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-100">
-                    <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500" aria-hidden />
-                    <span className="tabular-nums">{selectedCount}</span>
-                    <span className="text-zinc-500 dark:text-zinc-400">selected</span>
-                  </span>
-                  <div className="flex items-center gap-2">
-                    {syncBusy ? <InlineStatusSkeleton size={20} /> : null}
-                    <button
-                      type="button"
-                      disabled={selectedCount === 0 || syncBusy}
-                      onClick={() => setConfirmOpen(true)}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand/30 transition hover:bg-brand-hover disabled:opacity-40 sm:w-auto dark:hover:bg-brand-hover"
-                    >
-                      <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
-                      {gallery.selectionSubmitted ? "Submit again" : "Submit Selection"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
             </div>
 
             <div className="relative mx-auto max-w-[1920px] px-4 pb-2 sm:px-5">
@@ -871,6 +978,14 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     Selections are temporarily locked by your photographer.
                   </p>
                 ) : null}
+                {maxClientSelections != null && !editingLocked ? (
+                  <p className="mt-2 rounded-lg border border-zinc-200/90 bg-zinc-50 px-2.5 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200">
+                    Select up to{" "}
+                    <span className="font-semibold tabular-nums">{maxClientSelections}</span>{" "}
+                    photo{maxClientSelections === 1 ? "" : "s"}.
+                    {selectionAtLimit ? " You’ve reached the limit." : null}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -878,11 +993,15 @@ export function ClientGalleryApp({ token }: { token: string }) {
 
         <div
           id="client-gallery-body"
-          className="scroll-mt-4 border-b border-zinc-200 bg-white/95 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/95"
+          className="relative z-40 scroll-mt-4 overflow-visible border-b border-zinc-200 bg-white/95 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/95"
         >
-          <div className="mx-auto max-w-[1920px] px-3 py-3 sm:px-5">
-            <div className="flex flex-col gap-2 rounded-2xl border border-zinc-200/80 bg-white p-2 shadow-sm shadow-zinc-900/[0.03] dark:border-zinc-800 dark:bg-zinc-950 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex w-full gap-1 rounded-xl bg-zinc-100/80 p-1 dark:bg-zinc-900 sm:w-auto">
+          <div className="mx-auto max-w-[1920px] overflow-visible px-3 py-3 sm:px-5">
+            <div className="flex items-center gap-1.5 overflow-visible rounded-2xl border border-zinc-200/80 bg-white p-1.5 shadow-sm shadow-zinc-900/[0.03] dark:border-zinc-800 dark:bg-zinc-950 sm:gap-2 sm:p-2">
+              <div
+                role="tablist"
+                aria-label="Gallery sections"
+                className="flex min-w-0 flex-1 gap-0.5 rounded-xl bg-zinc-100/80 p-0.5 dark:bg-zinc-900 sm:gap-1 sm:p-1"
+              >
                 {(
                   [
                     ["all", "Originals"],
@@ -901,20 +1020,24 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     <button
                       key={key}
                       type="button"
+                      role="tab"
+                      aria-selected={active}
                       onClick={() => setPhotoTab(key)}
-                      className={`inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium transition sm:min-h-[38px] sm:flex-none sm:justify-start sm:gap-2 sm:px-3.5 sm:text-sm ${
+                      className={cn(
+                        "inline-flex min-h-[36px] min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition sm:min-h-[38px] sm:flex-none sm:gap-1.5 sm:px-3.5 sm:text-sm",
                         active
                           ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-white dark:ring-zinc-700"
-                          : "text-zinc-600 hover:bg-white/70 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-white"
-                      }`}
+                          : "text-zinc-600 hover:bg-white/70 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-white",
+                      )}
                     >
                       <span className="truncate">{label}</span>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                        className={cn(
+                          "shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums sm:px-2 sm:py-0.5 sm:text-[11px]",
                           active
                             ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950"
-                            : "bg-white text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400"
-                        }`}
+                            : "bg-white text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400",
+                        )}
                       >
                         {count}
                       </span>
@@ -923,155 +1046,135 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 })}
               </div>
 
-              <div
-                className="grid w-full grid-cols-5 gap-1 rounded-xl bg-zinc-100/80 p-1 dark:bg-zinc-900 sm:w-auto sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
-                role="toolbar"
-                aria-label="Gallery grid layout"
-              >
-                {GRID_LAYOUTS.map(({ id, shortLabel, icon: Icon }) => {
-                  const active = gridLayout === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setGridLayout(id)}
-                      title={GRID_LAYOUTS.find((g) => g.id === id)?.label}
-                      aria-pressed={active}
-                      className={`inline-flex min-h-[48px] items-center justify-center rounded-lg px-1.5 py-1.5 text-[10px] font-medium transition sm:min-h-[38px] sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs ${
-                        active
-                          ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-white dark:ring-zinc-700"
-                          : "text-zinc-600 hover:bg-white/70 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-white"
-                      }`}
-                    >
-                      <span className="flex flex-col items-center gap-0.5 sm:flex-row sm:gap-1.5">
-                        <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" />
-                        <span className="leading-none">{shortLabel}</span>
-                      </span>
-                    </button>
-                  );
-                })}
+              <div ref={layoutMenuRef} className="relative z-50 shrink-0">
+                <button
+                  ref={layoutMenuButtonRef}
+                  type="button"
+                  onClick={() => setLayoutMenuOpen((open) => !open)}
+                  aria-expanded={layoutMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="Change gallery layout"
+                  className={cn(
+                    "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200/80 bg-zinc-100/80 text-zinc-700 transition hover:bg-white hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:hover:text-white sm:h-[38px] sm:w-[38px] sm:rounded-xl",
+                    layoutMenuOpen &&
+                      "bg-white text-zinc-950 ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-white dark:ring-zinc-700",
+                  )}
+                >
+                  <MoreVertical className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden />
+                </button>
+                {layoutMenuOpen && layoutMenuPosition && typeof document !== "undefined"
+                  ? createPortal(
+                      <div
+                        ref={layoutMenuPanelRef}
+                        role="menu"
+                        aria-label="Gallery layout options"
+                        style={{
+                          position: "fixed",
+                          top: layoutMenuPosition.top,
+                          right: layoutMenuPosition.right,
+                        }}
+                        className="z-[200] min-w-[12.5rem] overflow-hidden rounded-xl border border-zinc-200/90 bg-white py-1 shadow-lg shadow-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-black/40"
+                      >
+                        {GRID_LAYOUTS.map(({ id, label, shortLabel, icon: Icon }) => {
+                          const active = gridLayout === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={active}
+                              onClick={() => {
+                                setGridLayout(id);
+                                setLayoutMenuOpen(false);
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition",
+                                active
+                                  ? "bg-brand/10 text-brand dark:bg-brand/20 dark:text-brand-100"
+                                  : "text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800",
+                              )}
+                            >
+                              <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+                              <span className="min-w-0 flex-1">
+                                <span className="block font-medium leading-tight">{shortLabel}</span>
+                                <span className="mt-0.5 block text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                                  {label}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>,
+                      document.body,
+                    )
+                  : null}
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      {photoTab === "all" && selectedAssets.length > 0 ? (
-        <div className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="mx-auto max-w-[1920px] px-3 py-4 sm:px-5">
-            <section className="rounded-2xl border border-zinc-200/80 bg-zinc-50/80 p-3 shadow-sm shadow-zinc-900/[0.03] dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                    Your selection
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedAssets.length} photo{selectedAssets.length === 1 ? "" : "s"} selected
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPhotoTab("selected")}
-                  className="inline-flex items-center justify-center rounded-full border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-brand/40 hover:text-brand dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:text-brand-on-dark"
-                >
-                  Review selected
-                </button>
-              </div>
-              <ul
-                className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]"
-                aria-label="Selected media"
+      {hasCollections ? (
+        <div className="border-b border-zinc-200/80 bg-white/95 dark:border-zinc-800 dark:bg-zinc-950/95">
+          <div className="mx-auto max-w-[1920px] px-3 py-3 sm:px-5">
+            <div
+              className="flex gap-2 overflow-x-auto pb-0.5 max-sm:[-ms-overflow-style:none] max-sm:[scrollbar-width:none] max-sm:[&::-webkit-scrollbar]:hidden sm:[scrollbar-width:thin]"
+              role="tablist"
+              aria-label="Collections"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={collectionFilter === "all"}
+                onClick={() => setCollectionFilter("all")}
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
+                  collectionFilter === "all"
+                    ? "bg-brand text-white shadow-sm shadow-brand/25"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                )}
               >
-                {selectedAssets.map((a) => {
-                  const showVideo = isDemoAssetVideo(a);
-                  return (
-                    <li
-                      key={a.id}
-                      className="group relative aspect-square w-20 shrink-0 overflow-hidden rounded-xl border border-brand/50 bg-white shadow-sm ring-1 ring-brand/10 dark:bg-zinc-950 sm:w-24 md:w-28"
-                    >
-                      <button
-                        type="button"
-                        className="relative block h-full w-full"
-                        onClick={() => openLb(a.id)}
-                      >
-                        {showVideo ? (
-                          <video
-                            src={a.previewUrl ?? a.thumbUrl}
-                            muted
-                            playsInline
-                            preload="metadata"
-                            aria-label={a.originalName}
-                            className="absolute inset-0 h-full w-full bg-black object-cover transition group-hover:brightness-95"
-                          />
-                        ) : (
-                          <Image
-                            src={a.thumbUrl}
-                            alt=""
-                            fill
-                            sizes={SELECTED_STRIP_IMAGE_SIZES}
-                            quality={SHARE_GRID_IMAGE_QUALITY}
-                            className="object-cover transition group-hover:brightness-95"
-                          />
-                        )}
-                        {showVideo ? <VideoTileOverlay /> : null}
-                        <span className="sr-only">Open {a.originalName}</span>
-                      </button>
-                      {!editingLocked ? (
-                        <button
-                          type="button"
-                          disabled={syncBusy}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void toggleSelect(a.id);
-                          }}
-                          className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white shadow backdrop-blur-sm transition hover:bg-black/70 disabled:opacity-40"
-                          aria-label={`Remove ${a.originalName} from selection`}
-                        >
-                          <span className="text-xs font-bold leading-none">×</span>
-                        </button>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+                All
+              </button>
+              {gallerySets.map((set) => (
+                <button
+                  key={set._id}
+                  type="button"
+                  role="tab"
+                  aria-selected={collectionFilter === set._id}
+                  onClick={() => setCollectionFilter(set._id)}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
+                    collectionFilter === set._id
+                      ? "bg-brand text-white shadow-sm shadow-brand/25"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                  )}
+                >
+                  {set.name}
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                      collectionFilter === set._id
+                        ? "bg-white/20 text-white"
+                        : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300",
+                    )}
+                  >
+                    {getCollectionSetCount(set)}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-
-      {gallery.selectionSubmitted && !editingLocked && photoTab !== "edited" ? (
-        <div className="mx-auto max-w-[1920px] px-3 py-3 sm:px-5">
-          <p className="rounded-2xl border border-emerald-200/80 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100">
-            <span className="font-semibold">Selection submitted.</span> You can still update your picks and submit again.
-          </p>
         </div>
       ) : null}
 
       <main className="mx-auto max-w-[1920px] bg-white px-4 py-8 pb-12 sm:px-5 dark:bg-zinc-950">
-        {gallery.coverImageUrl && !editingLocked && photoTab !== "edited" ? (
-          <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-            <span className="inline-flex items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
-              <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500" aria-hidden />
-              <span className="tabular-nums">{selectedCount}</span>
-              <span className="text-zinc-500 dark:text-zinc-400">selected</span>
-            </span>
-            <div className="flex items-center gap-2 sm:justify-end">
-              {syncBusy ? <InlineStatusSkeleton size={20} /> : null}
-              <button
-                type="button"
-                disabled={selectedCount === 0 || syncBusy}
-                onClick={() => setConfirmOpen(true)}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand/30 transition hover:bg-brand-hover disabled:opacity-40 sm:w-auto dark:hover:bg-brand-hover"
-              >
-                <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
-                {gallery.selectionSubmitted ? "Submit again" : "Submit Selection"}
-              </button>
-            </div>
-          </div>
-        ) : null}
         {photoTab === "edited" ? (
-          gallery.finals.length === 0 ? (
+          visibleFinals.length === 0 ? (
             <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
-              Edited photos will appear here when your photographer delivers them.
+              {hasCollections && collectionFilter !== "all"
+                ? "No finals in this collection yet."
+                : "Edited photos will appear here when your photographer delivers them."}
             </p>
           ) : (
             <>
@@ -1118,14 +1221,116 @@ export function ClientGalleryApp({ token }: { token: string }) {
                   </button>
                 </div>
               ) : null}
-              <ul className={galleryListClass(gridLayout)}>
-              {gallery.finals.map((f, index) => {
+              {isMasonryLayout ? (
+                <ShareGalleryMasonryList
+                  items={displayedFinals}
+                  columnCount={masonryColumnCount}
+                  resetKey={`${masonryResetKey}:finals`}
+                >
+                  {(f, index) => {
                 const locked = Boolean(f.locked);
                 const imgSrc = finalDisplaySrc(f, token);
                 const showUnlockedVideo = !locked && isShareFinalVideo(f);
                 return (
                   <li key={f.id} className={`flex flex-col ${editedCardClass(gridLayout, index)}`}>
-                    <div className={uploadImageWrapClass(gridLayout, index)}>
+                    <div className={uploadImageWrapClass(gridLayout, index, f.id)}>
+                      <button
+                        type="button"
+                        onClick={() => openFinalLb(f.id)}
+                        className="absolute inset-0 block h-full w-full border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 dark:focus-visible:ring-brand-on-dark"
+                      >
+                        {showUnlockedVideo ? (
+                          <video
+                            src={f.url}
+                            {...(f.lockedPreviewUrl ? { poster: f.lockedPreviewUrl } : {})}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            aria-label={f.name}
+                            className="absolute inset-0 h-full w-full cursor-zoom-in bg-black object-cover pointer-events-none"
+                          />
+                        ) : (
+                          <Image
+                            src={imgSrc}
+                            alt={f.name}
+                            fill
+                            sizes={shareGalleryGridSizes(gridLayout, index)}
+                            quality={SHARE_GRID_IMAGE_QUALITY}
+                            priority={index < 10}
+                            draggable={!locked}
+                            className={cn(
+                              "cursor-zoom-in object-cover",
+                              locked && "select-none",
+                            )}
+                            onContextMenu={(e) => {
+                              if (locked) e.preventDefault();
+                            }}
+                          />
+                        )}
+                        {showUnlockedVideo ? <VideoTileOverlay /> : null}
+                      </button>
+                      {locked ? (
+                        <div
+                          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/25 to-transparent"
+                          aria-hidden
+                        />
+                      ) : null}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-end bg-gradient-to-t from-black/55 via-black/20 to-transparent p-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                        <div className="pointer-events-auto flex items-center gap-1.5">
+                          {locked ? (
+                            <span
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/45 bg-black/35 text-white shadow-sm backdrop-blur-md"
+                              title="Locked"
+                            >
+                              <Lock className="h-4 w-4" aria-hidden />
+                            </span>
+                          ) : preferInlineFinalSave ? (
+                            <button
+                              type="button"
+                              title={touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo"}
+                              aria-label={touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo"}
+                              disabled={finalSaveBusyId !== null}
+                              aria-busy={finalSaveBusyId === f.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeliverFinalPhotoMobile(f);
+                              }}
+                              className={tileActionClass()}
+                            >
+                              {finalSaveBusyId === f.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                              ) : (
+                                <Download className="h-4 w-4" aria-hidden />
+                              )}
+                            </button>
+                          ) : (
+                            <a
+                              href={getShareFinalDownloadUrl(token, f.id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Download ${f.name}`}
+                              className={tileActionClass()}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Download className="h-4 w-4" aria-hidden />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+                  }}
+                </ShareGalleryMasonryList>
+              ) : (
+              <ul className={galleryListClass(gridLayout)}>
+              {displayedFinals.map((f, index) => {
+                const locked = Boolean(f.locked);
+                const imgSrc = finalDisplaySrc(f, token);
+                const showUnlockedVideo = !locked && isShareFinalVideo(f);
+                return (
+                  <li key={f.id} className={`flex flex-col ${editedCardClass(gridLayout, index)}`}>
+                    <div className={uploadImageWrapClass(gridLayout, index, f.id)}>
                       <button
                         type="button"
                         onClick={() => openFinalLb(f.id)}
@@ -1214,24 +1419,108 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 );
               })}
             </ul>
+              )}
+              {hasMoreFinals ? (
+                <GalleryViewMoreButton
+                  onClick={loadMoreGalleryMedia}
+                  remainingCount={remainingFinalsCount}
+                />
+              ) : null}
             </>
           )
         ) : visibleAssets.length === 0 ? (
           <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
             {photoTab === "selected"
-              ? "You have not selected any items yet."
-              : "No media in this gallery yet."}
+              ? hasCollections && collectionFilter !== "all"
+                ? "No selected photos in this collection yet."
+                : "You have not selected any items yet."
+              : hasCollections && collectionFilter !== "all"
+                ? "No photos in this collection yet."
+                : "No media in this gallery yet."}
           </p>
         ) : (
-          <ul className={galleryListClass(gridLayout)}>
-            {visibleAssets.map((a, index) => {
+          <>
+          {isMasonryLayout ? (
+            <ShareGalleryMasonryList
+              items={displayedAssets}
+              columnCount={masonryColumnCount}
+              resetKey={`${masonryResetKey}:assets`}
+            >
+              {(a, index) => {
               const showVideo = isDemoAssetVideo(a);
               return (
               <li
                 key={a.id}
                 className={uploadItemClass(gridLayout, index, a.selection === "SELECTED")}
               >
-                <div className={uploadImageWrapClass(gridLayout, index)}>
+                <div className={uploadImageWrapClass(gridLayout, index, a.id)}>
+                  <button
+                    type="button"
+                    className="absolute inset-0 block h-full w-full text-left"
+                    onClick={() => openLb(a.id)}
+                  >
+                    {showVideo ? (
+                      <video
+                        src={a.previewUrl ?? a.thumbUrl}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        aria-label={a.originalName}
+                        className="absolute inset-0 h-full w-full bg-black object-cover transition group-hover:brightness-[0.97]"
+                      />
+                    ) : (
+                      <Image
+                        src={a.thumbUrl}
+                        alt={a.originalName}
+                        fill
+                        sizes={shareGalleryGridSizes(gridLayout, index)}
+                        quality={SHARE_GRID_IMAGE_QUALITY}
+                        priority={index < 10}
+                        className="object-cover transition group-hover:brightness-[0.97]"
+                      />
+                    )}
+                    {showVideo ? <VideoTileOverlay /> : null}
+                  </button>
+
+                  <div
+                    className={cn(
+                      "pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-end bg-gradient-to-t from-black/55 via-black/20 to-transparent p-2 transition group-focus-within:opacity-100 group-hover:opacity-100",
+                      a.selection === "SELECTED" ? "opacity-100" : "opacity-100 sm:opacity-0",
+                    )}
+                  >
+                    <div className="pointer-events-auto flex items-center gap-1.5">
+                      {!editingLocked ? (
+                        <button
+                          type="button"
+                          disabled={syncBusy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void toggleSelect(a.id);
+                          }}
+                          className={tileActionClass(a.selection === "SELECTED")}
+                          aria-label={a.selection === "SELECTED" ? "Unselect photo" : "Select photo"}
+                          title={a.selection === "SELECTED" ? "Unselect" : "Select"}
+                        >
+                          <Heart className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </li>
+            );
+              }}
+            </ShareGalleryMasonryList>
+          ) : (
+          <ul className={galleryListClass(gridLayout)}>
+            {displayedAssets.map((a, index) => {
+              const showVideo = isDemoAssetVideo(a);
+              return (
+              <li
+                key={a.id}
+                className={uploadItemClass(gridLayout, index, a.selection === "SELECTED")}
+              >
+                <div className={uploadImageWrapClass(gridLayout, index, a.id)}>
                   <button
                     type="button"
                     className="absolute inset-0 block h-full w-full text-left"
@@ -1289,8 +1578,46 @@ export function ClientGalleryApp({ token }: { token: string }) {
             );
             })}
           </ul>
+          )}
+          {hasMoreAssets ? (
+            <GalleryViewMoreButton
+              onClick={loadMoreGalleryMedia}
+              remainingCount={remainingAssetsCount}
+            />
+          ) : null}
+          </>
         )}
       </main>
+
+      <footer className="border-t border-zinc-200/80 bg-white px-4 py-8 pb-[max(env(safe-area-inset-bottom),2rem)] text-center dark:border-zinc-800 dark:bg-zinc-950 sm:px-5">
+        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Powered by{" "}
+          <a
+            href={STUDIO_WEBSITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-bold text-zinc-900 underline decoration-zinc-400 underline-offset-[3px] transition hover:text-brand hover:decoration-brand dark:text-zinc-100 dark:decoration-zinc-500 dark:hover:text-brand-on-dark dark:hover:decoration-brand-on-dark"
+          >
+            {STUDIO_NAME} / {STUDIO_TAGLINE}
+          </a>
+        </p>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-5 sm:gap-8">
+          <Image
+            src={STUDIO_LOGO_SRC}
+            alt="Gidophotography"
+            width={160}
+            height={50}
+            className="h-8 w-auto object-contain opacity-90 dark:brightness-0 dark:invert dark:opacity-95 sm:h-9"
+          />
+          <Image
+            src={STUDIO_WEDDINGS_LOGO_SRC}
+            alt={STUDIO_TAGLINE}
+            width={72}
+            height={78}
+            className="h-10 w-auto object-contain opacity-90 dark:brightness-0 dark:invert dark:opacity-95 sm:h-11"
+          />
+        </div>
+      </footer>
 
       {lightboxId && lbAsset ? (
         <div
@@ -1491,7 +1818,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 type="button"
                 disabled={finalLbIndex <= 0}
                 onClick={() => {
-                  const prev = gallery.finals[finalLbIndex - 1];
+                  const prev = visibleFinals[finalLbIndex - 1];
                   if (prev) {
                     setFinalLightboxId(prev.id);
                     setZoom(1);
@@ -1541,9 +1868,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
               </div>
               <button
                 type="button"
-                disabled={finalLbIndex < 0 || finalLbIndex >= gallery.finals.length - 1}
+                disabled={finalLbIndex < 0 || finalLbIndex >= visibleFinals.length - 1}
                 onClick={() => {
-                  const next = gallery.finals[finalLbIndex + 1];
+                  const next = visibleFinals[finalLbIndex + 1];
                   if (next) {
                     setFinalLightboxId(next.id);
                     setZoom(1);
@@ -1672,44 +1999,6 @@ export function ClientGalleryApp({ token }: { token: string }) {
             </div>
           ) : null}
         </>
-      ) : null}
-
-      {confirmOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            aria-label="Close"
-            onClick={() => setConfirmOpen(false)}
-          />
-          <div className="relative z-10 w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              {gallery.selectionSubmitted ? "Submit updated selection?" : "Submit your selection?"}
-            </h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              {gallery.selectionSubmitted
-                ? `You have ${selectedCount} image${selectedCount === 1 ? "" : "s"} selected. This sends your latest picks to your photographer.`
-                : `You chose ${selectedCount} image${selectedCount === 1 ? "" : "s"}. This sends your picks to your photographer.`}
-            </p>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(false)}
-                className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium dark:border-zinc-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={syncBusy}
-                onClick={() => void submitSelections()}
-                className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-black"
-              >
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
       ) : null}
 
       {photoSaveAssist ? (

@@ -41,7 +41,7 @@ export function StatValueSkeleton() {
 /** Full folder detail page initial load. */
 export function FolderDetailPageSkeleton() {
   return (
-    <div className={cn("mx-auto max-w-6xl space-y-6", darkSkeleton)}>
+    <div className={cn("mx-auto w-full max-w-[1600px] space-y-6", darkSkeleton)}>
       <Skeleton active title={{ width: 220 }} paragraph={false} />
       <div className="overflow-hidden rounded-2xl border border-zinc-200/80 dark:border-zinc-800">
         <Skeleton.Image active className="!h-[200px] !w-full md:!h-[240px]" />

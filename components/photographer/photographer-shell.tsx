@@ -336,7 +336,7 @@ export function PhotographerShell({ children }: { children: React.ReactNode }) {
             </div>
           </aside>
 
-          <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-zinc-200/80 bg-white/95 px-4 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/80 lg:px-8">
+          <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-zinc-200/80 bg-white/95 px-4 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/80 sm:px-5 lg:px-6 xl:px-8">
             <div className="flex flex-1 items-center gap-3">
               <button
                 type="button"
@@ -405,7 +405,9 @@ export function PhotographerShell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto p-4 lg:p-8">{children}</main>
+          <main className="flex-1 overflow-auto p-4 sm:p-5 lg:p-6 xl:p-8">
+            {children}
+          </main>
         </div>
       </div>
     </SearchContext.Provider>

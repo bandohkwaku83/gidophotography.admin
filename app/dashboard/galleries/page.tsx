@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderOpen, Plus, Search, Sparkles, X } from "lucide-react";
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { FolderCard } from "@/components/photographer/folder-card";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import { CreateFolderModal } from "@/components/photographer/create-folder-modal";
@@ -145,7 +146,7 @@ export default function GalleriesPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <DashboardPage className="space-y-8">
       <section className="relative overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-8">
         <div
           className="pointer-events-none absolute -right-16 -top-12 h-48 w-48 rounded-full bg-brand/[0.12] blur-3xl dark:bg-brand/10"
@@ -300,6 +301,6 @@ export default function GalleriesPage() {
         }}
         onSaved={handleSaved}
       />
-    </div>
+    </DashboardPage>
   );
 }

@@ -1,6 +1,11 @@
 import { API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 import type { DemoAsset, DemoFinalAsset, FolderStatus } from "@/lib/demo-data";
-import type { ApiFolder, ApiFolderMedia } from "@/lib/folders/types";
+import type {
+  ApiFolder,
+  ApiFolderMedia,
+  ApiFolderMediaBySetBucket,
+  ApiFolderSet,
+} from "@/lib/folders/types";
 
 export type FolderMediaDuplicatePreviewKind = "raw" | "final";
 
@@ -30,7 +35,89 @@ export function readIgnoredDuplicatesCount(body: unknown): number {
   return typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
 }
 
+export function extractFolderSets(folder: ApiFolder): ApiFolderSet[] {
+  const f = folder as Record<string, unknown>;
+  const v = f.sets;
+  if (!Array.isArray(v)) return [];
+  const sets = v.filter(
+    (row): row is ApiFolderSet =>
+      !!row &&
+      typeof row === "object" &&
+      typeof (row as { _id?: unknown })._id === "string" &&
+      typeof (row as { name?: unknown }).name === "string",
+  );
+  return [...sets].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+}
+
+function bucketSetIdFromRow(b: Record<string, unknown>): string | null {
+  if (b.setId === null || b.set_id === null) return null;
+  return parseSetIdFromApiRow(b);
+}
+
+/** Flatten `uploadsBySet` / `selectionBySet` / `finalsBySet` buckets into rows with `setId`. */
+export function flattenMediaFromBySetBuckets(buckets: unknown): ApiFolderMedia[] {
+  if (!Array.isArray(buckets) || buckets.length === 0) return [];
+  const out: ApiFolderMedia[] = [];
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== "object") continue;
+    const b = bucket as Record<string, unknown>;
+    const bucketSetId = bucketSetIdFromRow(b);
+    const media = b.media ?? b.uploads ?? b.items ?? b.files;
+    if (!Array.isArray(media)) continue;
+    for (const row of media) {
+      if (!row || typeof row !== "object") continue;
+      const o = row as Record<string, unknown>;
+      const rowSetId = parseSetIdFromApiRow(o) ?? bucketSetId;
+      out.push({
+        ...(row as ApiFolderMedia),
+        setId: rowSetId ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+function readBySetBuckets(folder: ApiFolder, key: keyof ApiFolder): ApiFolderMediaBySetBucket[] | undefined {
+  const f = folder as Record<string, unknown>;
+  const v = f[key as string];
+  return Array.isArray(v) ? (v as ApiFolderMediaBySetBucket[]) : undefined;
+}
+
+export function filterRawAssetsBySetView<T extends { setId?: string | null }>(
+  assets: T[],
+  view: "all" | "general" | string,
+): T[] {
+  return filterAssetsBySetView(assets, view);
+}
+
+export function filterAssetsBySetView<T extends { setId?: string | null }>(
+  assets: T[],
+  view: "all" | "general" | string,
+): T[] {
+  if (view === "all") return assets;
+  if (view === "general") {
+    return assets.filter((a) => a.setId == null || a.setId === "");
+  }
+  return assets.filter((a) => a.setId === view);
+}
+
+export function parseSetIdFromApiRow(o: Record<string, unknown>): string | null {
+  const rawSet = o.setId ?? o.set_id ?? o.set;
+  if (typeof rawSet === "string" && rawSet.trim()) return rawSet.trim();
+  if (rawSet && typeof rawSet === "object") {
+    const id =
+      (rawSet as { _id?: unknown })._id ?? (rawSet as { id?: unknown }).id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+  return null;
+}
+
 export function extractRawMediaList(folder: ApiFolder): ApiFolderMedia[] {
+  const bySet = readBySetBuckets(folder, "uploadsBySet");
+  if (bySet?.length) {
+    const flat = flattenMediaFromBySetBuckets(bySet);
+    if (flat.length > 0) return flat;
+  }
   const f = folder as Record<string, unknown>;
   for (const k of ["uploads", "rawMedia", "rawFiles", "mediaRaw"]) {
     const v = f[k];
@@ -74,6 +161,10 @@ function normalizeSelectionListItem(item: unknown): ApiFolderMedia | null {
             : typeof row.comment === "string"
               ? row.comment
               : undefined,
+        setId:
+          parseSetIdFromApiRow(row) ??
+          parseSetIdFromApiRow(r) ??
+          undefined,
         selected: true,
         selection: "SELECTED",
         isSelected: true,
@@ -84,6 +175,18 @@ function normalizeSelectionListItem(item: unknown): ApiFolderMedia | null {
 }
 
 export function extractSelectionMediaList(folder: ApiFolder): ApiFolderMedia[] {
+  const bySet = readBySetBuckets(folder, "selectionBySet");
+  if (bySet?.length) {
+    const flat = flattenMediaFromBySetBuckets(bySet);
+    if (flat.length > 0) {
+      const out: ApiFolderMedia[] = [];
+      for (const item of flat) {
+        const n = normalizeSelectionListItem(item);
+        if (n) out.push(n);
+      }
+      if (out.length > 0) return out;
+    }
+  }
   const f = folder as Record<string, unknown>;
   const chunks: unknown[] = [];
   for (const k of ["selection", "selectionMedia", "selections", "clientSelections"]) {
@@ -110,6 +213,11 @@ export function extractSelectionMediaList(folder: ApiFolder): ApiFolderMedia[] {
 }
 
 export function extractFinalMediaList(folder: ApiFolder): ApiFolderMedia[] {
+  const bySet = readBySetBuckets(folder, "finalsBySet");
+  if (bySet?.length) {
+    const flat = flattenMediaFromBySetBuckets(bySet);
+    if (flat.length > 0) return flat;
+  }
   const f = folder as Record<string, unknown>;
   for (const k of ["finals", "finalMedia", "finalFiles"]) {
     const v = f[k];
@@ -133,13 +241,24 @@ export function folderMediaRowFilename(m: ApiFolderMedia): string {
  * Filenames in {@link incoming} that match an existing file name in the folder
  * for raw uploads or finals (same string match as typical duplicate checks).
  */
+function folderMediaMatchesSet(m: ApiFolderMedia, setId: string | null | undefined): boolean {
+  const rowSet = parseSetIdFromApiRow(m as Record<string, unknown>) ?? m.setId ?? null;
+  if (setId === undefined) return true;
+  if (setId === null) return rowSet == null || rowSet === "";
+  return rowSet === setId;
+}
+
 export function incomingFilenamesConflictingWithFolder(
   kind: FolderMediaDuplicatePreviewKind,
   incoming: string[],
   folder: ApiFolder,
+  setId?: string | null,
 ): string[] {
-  const existingRows =
+  let existingRows =
     kind === "raw" ? extractRawMediaList(folder) : extractFinalMediaList(folder);
+  if (setId !== undefined) {
+    existingRows = existingRows.filter((m) => folderMediaMatchesSet(m, setId));
+  }
   const existing = new Set<string>();
   for (const m of existingRows) {
     const n = folderMediaRowFilename(m);
@@ -191,6 +310,15 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
     m.selected === true ||
     (typeof m.selection === "string" && m.selection.toUpperCase() === "SELECTED") ||
     m.isSelected === true;
+  const o = m as Record<string, unknown>;
+  const setId = parseSetIdFromApiRow(o);
+  const rawMediaId =
+    typeof m.rawMediaId === "string"
+      ? m.rawMediaId
+      : typeof o.rawMediaId === "string"
+        ? o.rawMediaId
+        : undefined;
+
   return {
     id,
     originalName,
@@ -200,6 +328,8 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
     hasEdited: false,
     thumbUrl,
     ...(mimeType ? { mimeType } : {}),
+    setId,
+    ...(rawMediaId ? { rawMediaId } : {}),
   };
 }
 
@@ -305,7 +435,15 @@ export function apiFolderMediaToFinal(m: ApiFolderMedia): DemoFinalAsset {
     truthyFlag(o.downloadLocked) ||
     truthyFlag(o.download_locked) ||
     lockStatus.toLowerCase() === "locked";
-  return { id, name, url, ...(mimeType ? { mimeType } : {}), locked };
+  const setId = parseSetIdFromApiRow(o);
+  return {
+    id,
+    name,
+    url,
+    ...(mimeType ? { mimeType } : {}),
+    locked,
+    setId,
+  };
 }
 
 /**
@@ -348,6 +486,37 @@ export function folderSelectionLocked(folder: ApiFolder): boolean {
   return Boolean(folder.share?.selectionLocked ?? folder.selectionLocked);
 }
 
+/** Parse max client selection cap from folder/share API fields; `null` = unlimited. */
+export function extractMaxClientSelections(folder: ApiFolder): number | null {
+  const read = (o: Record<string, unknown>): number | null => {
+    for (const key of [
+      "maxClientSelections",
+      "max_client_selections",
+      "selectionLimit",
+      "selection_limit",
+      "maxSelections",
+      "max_selections",
+    ]) {
+      const v = o[key];
+      if (v === null || v === undefined || v === "") continue;
+      if (v === false) continue;
+      if (v === 0 || v === "0") return null;
+      const n = typeof v === "number" ? v : Number(String(v).trim().replace(/,/g, ""));
+      if (!Number.isFinite(n) || n < 1) continue;
+      return Math.min(9999, Math.floor(n));
+    }
+    return null;
+  };
+
+  if (folder.share && typeof folder.share === "object") {
+    const fromShare = read(folder.share as Record<string, unknown>);
+    if (fromShare != null) return fromShare;
+  }
+  const fromRoot = read(folder as Record<string, unknown>);
+  if (fromRoot != null) return fromRoot;
+  return null;
+}
+
 /** Resolve a coverImage value (could be absolute URL or a relative path). */
 export function resolveCoverUrl(coverImage?: string | null): string | null {
   if (!coverImage) return null;
@@ -365,6 +534,21 @@ export function resolveCoverUrl(coverImage?: string | null): string | null {
 export function getFolderCoverUrl(folder: ApiFolder): string | null {
   if (folder.coverImageUrl) return resolveCoverUrl(folder.coverImageUrl);
   return resolveCoverUrl(folder.coverImage);
+}
+
+/** Bust browser cache when the cover file changes but the URL path stays the same. */
+export function appendCoverCacheBust(url: string, version: string | number): string {
+  if (!url || url.startsWith("blob:")) return url;
+  try {
+    const base =
+      typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const parsed = new URL(url, base);
+    parsed.searchParams.set("v", String(version));
+    return parsed.toString();
+  } catch {
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}v=${encodeURIComponent(String(version))}`;
+  }
 }
 
 function readNumericField(o: Record<string, unknown>, camel: string, snake: string): number | null {

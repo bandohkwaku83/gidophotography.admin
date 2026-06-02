@@ -12,6 +12,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { useToast } from "@/components/toast-provider";
 import { NewBookingModal, type NewBookingDraft } from "@/components/schedules/new-booking-modal";
 import {
@@ -395,7 +396,7 @@ export function SchedulesClient() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <DashboardPage className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -715,6 +716,6 @@ export function SchedulesClient() {
         onSave={handleSaveBooking}
         onReplace={handleReplaceBooking}
       />
-    </div>
+    </DashboardPage>
   );
 }

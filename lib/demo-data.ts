@@ -15,6 +15,10 @@ export type DemoAsset = {
   /** MIME type when the API provides it, e.g. image/jpeg or video/mp4. */
   mimeType?: string;
   editedPreviewUrl?: string;
+  /** Folder set (sub-gallery) id when assigned; null/omitted = General. */
+  setId?: string | null;
+  /** Source raw upload id when this row is a client selection. */
+  rawMediaId?: string;
 };
 
 export type DemoFinalAsset = {
@@ -25,6 +29,8 @@ export type DemoFinalAsset = {
   mimeType?: string;
   /** Payment lock — client share hides full-res download until unlock. */
   locked?: boolean;
+  /** Folder set (sub-gallery) id when assigned; null/omitted = General. */
+  setId?: string | null;
 };
 
 export type DemoProject = {

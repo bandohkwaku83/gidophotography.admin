@@ -12,12 +12,15 @@ import {
   ExternalLink,
   Focus,
   ImageIcon,
+  ImagePlus,
   Layers,
   Link2,
   Music2,
   Images,
   Package,
+  Pencil,
   PlayCircle,
+  Plus,
   Share2,
   Sparkles,
   Trash2,
@@ -57,6 +60,7 @@ import {
   extractSelectionMediaList,
   getFolder,
   getFolderClientName,
+  appendCoverCacheBust,
   getFolderCoverUrl,
   folderCoverObjectPositionStyle,
   FALLBACK_SHARE_EXPIRY_PRESETS,
@@ -67,7 +71,9 @@ import {
   getShareLinkExpiryPresets,
   incomingFilenamesConflictingWithFolder,
   parseFolderCoverFocal,
+  patchFolderShare,
   patchFolderStatus,
+  createFolderSet,
   deleteAllFolderFinalMedia,
   deleteAllFolderRawMedia,
   deleteFolderBackgroundMusic,
@@ -77,6 +83,8 @@ import {
   regenerateFolderShare,
   lockFolderFinalDelivery,
   unlockFolderFinalDelivery,
+  updateFolderSet,
+  deleteFolderSet,
   updateFolder,
   uploadFolderBackgroundMusic,
   uploadFolderFinalMedia,
@@ -87,11 +95,16 @@ import {
   type ShareLinkExpiryPreset,
   type UploadFolderFinalMediaFormOptions,
   type UploadFolderMediaFormOptions,
+  extractFolderSets,
+  extractMaxClientSelections,
 } from "@/lib/folders-api";
 import { getDuplicateUploadPreference } from "@/lib/upload-preferences";
 
-function rawUploadFormOptions(duplicateAction: DuplicateUploadAction): UploadFolderMediaFormOptions {
-  return { duplicateAction, markUploadComplete: true };
+function rawUploadFormOptions(
+  duplicateAction: DuplicateUploadAction,
+  setId?: string | null,
+): UploadFolderMediaFormOptions {
+  return { duplicateAction, markUploadComplete: true, ...(setId !== undefined ? { setId } : {}) };
 }
 
 function finalUploadFormOptions(
@@ -99,11 +112,13 @@ function finalUploadFormOptions(
   files: File[],
   selectionMediaId: string | undefined,
   delivery: FinalDeliveryUploadFields,
+  setId?: string | null,
 ): UploadFolderFinalMediaFormOptions {
   const opts: UploadFolderFinalMediaFormOptions = {
     duplicateAction,
     markUploadComplete: true,
     clientHasPaidForFinals: delivery.clientHasPaidForFinals,
+    ...(setId !== undefined ? { setId } : {}),
   };
   if (files.length === 1 && selectionMediaId) {
     opts.selectionMediaId = selectionMediaId;
@@ -166,6 +181,7 @@ function AdminMediaPreview({
 }
 
 type Tab = "uploads" | "selection" | "finals";
+type SetFilter = "all" | "general" | string;
 
 export function FolderDetailView({ folderId }: { folderId: string }) {
   const { showToast } = useToast();
@@ -193,10 +209,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const rawSelectAllRef = useRef<HTMLInputElement>(null);
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
   const musicFileInputRef = useRef<HTMLInputElement>(null);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
 
   const [focalEditOpen, setFocalEditOpen] = useState(false);
   const [focalDraft, setFocalDraft] = useState({ x: 50, y: 50 });
   const [savingFocal, setSavingFocal] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  /** Local blob preview while uploading; cleared after server URL is ready. */
+  const [localCoverPreviewUrl, setLocalCoverPreviewUrl] = useState<string | null>(null);
+  /** Bumps when cover file changes so repeated URLs bypass browser cache. */
+  const [coverCacheVersion, setCoverCacheVersion] = useState(0);
 
   /** After duplicate-preview: user chooses replace vs skip before uploading bytes. */
   const [musicBusy, setMusicBusy] = useState(false);
@@ -204,6 +226,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [duplicateFilenamePrompt, setDuplicateFilenamePrompt] = useState<null | {
     kind: "raw" | "final";
     files: File[];
+    setId?: string | null;
     selectionMediaId?: string;
     conflictingNames: string[];
   }>(null);
@@ -220,10 +243,28 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [lockFinalDeliveryOpen, setLockFinalDeliveryOpen] = useState(false);
   const [lockFinalDeliveryAmount, setLockFinalDeliveryAmount] = useState("");
   const [lockingFinalDelivery, setLockingFinalDelivery] = useState(false);
+  const [newSetName, setNewSetName] = useState("");
+  const [creatingSet, setCreatingSet] = useState(false);
+  const [editingSetId, setEditingSetId] = useState<string | null>(null);
+  const [editingSetName, setEditingSetName] = useState("");
+  const [savingSetId, setSavingSetId] = useState<string | null>(null);
+  const [deletingSetId, setDeletingSetId] = useState<string | null>(null);
+  const [activeSetFilter, setActiveSetFilter] = useState<SetFilter>("all");
+  const [selectionLimitUnlimited, setSelectionLimitUnlimited] = useState(true);
+  const [selectionLimitInput, setSelectionLimitInput] = useState("20");
+  const [selectionLimitSaving, setSelectionLimitSaving] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (localCoverPreviewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(localCoverPreviewUrl);
+      }
+    };
+  }, [localCoverPreviewUrl]);
 
   const refreshFolder = useCallback(async () => {
     const f = await getFolder(folderId);
@@ -309,11 +350,65 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     const picked = selectionRows.filter((a) => a.selection === "SELECTED");
     return picked.length > 0 ? picked : selectionRows;
   }, [selectionRows]);
+  const folderSets = useMemo(() => (folder ? extractFolderSets(folder) : []), [folder]);
+  const filteredRawAssets = useMemo(() => {
+    if (activeSetFilter === "all") return rawAssets;
+    if (activeSetFilter === "general") return rawAssets.filter((a) => !a.setId);
+    return rawAssets.filter((a) => a.setId === activeSetFilter);
+  }, [rawAssets, activeSetFilter]);
+  const filteredFinalAssets = useMemo(() => {
+    if (activeSetFilter === "all") return finalAssets;
+    if (activeSetFilter === "general") return finalAssets.filter((f) => !f.setId);
+    return finalAssets.filter((f) => f.setId === activeSetFilter);
+  }, [finalAssets, activeSetFilter]);
+  const filteredClientSelectedAssets = useMemo(() => {
+    if (activeSetFilter === "all") return clientSelectedAssets;
+    if (activeSetFilter === "general") return clientSelectedAssets.filter((a) => !a.setId);
+    return clientSelectedAssets.filter((a) => a.setId === activeSetFilter);
+  }, [clientSelectedAssets, activeSetFilter]);
+  const activeSetItem = useMemo(
+    () =>
+      activeSetFilter !== "all" && activeSetFilter !== "general"
+        ? folderSets.find((s) => s._id === activeSetFilter) ?? null
+        : null,
+    [folderSets, activeSetFilter],
+  );
+  const generalCount = useMemo(() => {
+    if (tab === "uploads") return rawAssets.filter((a) => !a.setId).length;
+    if (tab === "finals") return finalAssets.filter((f) => !f.setId).length;
+    return clientSelectedAssets.filter((a) => !a.setId).length;
+  }, [tab, rawAssets, finalAssets, clientSelectedAssets]);
+  const getSetCount = useCallback(
+    (setId: string) => {
+      const setRow = folderSets.find((s) => s._id === setId);
+      if (setRow) {
+        if (tab === "uploads" && typeof setRow.rawCount === "number") return setRow.rawCount;
+        if (tab === "finals" && typeof setRow.finalCount === "number") return setRow.finalCount;
+        if (tab === "selection" && typeof setRow.selectionCount === "number")
+          return setRow.selectionCount;
+        if (typeof setRow.mediaCount === "number") return setRow.mediaCount;
+      }
+      if (tab === "uploads") return rawAssets.filter((a) => a.setId === setId).length;
+      if (tab === "finals") return finalAssets.filter((f) => f.setId === setId).length;
+      return clientSelectedAssets.filter((a) => a.setId === setId).length;
+    },
+    [folderSets, tab, rawAssets, finalAssets, clientSelectedAssets],
+  );
+  const savedMaxClientSelections = useMemo(
+    () => (folder ? extractMaxClientSelections(folder) : null),
+    [folder],
+  );
+  const selectionLimitDirty = useMemo(() => {
+    if (!folder) return false;
+    if (selectionLimitUnlimited) return savedMaxClientSelections != null;
+    const n = Number.parseInt(selectionLimitInput.trim(), 10);
+    return Number.isFinite(n) && n >= 1 && n <= 9999 && n !== savedMaxClientSelections;
+  }, [folder, selectionLimitUnlimited, selectionLimitInput, savedMaxClientSelections]);
 
   type FolderLightboxItem = { id: string; name: string; src: string; isVideo: boolean };
   const lightboxNavItems = useMemo((): FolderLightboxItem[] => {
     if (tab === "uploads") {
-      return rawAssets.map((a) => ({
+      return filteredRawAssets.map((a) => ({
         id: a.id,
         name: a.originalName,
         src: a.previewUrl ?? a.thumbUrl,
@@ -321,20 +416,20 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       }));
     }
     if (tab === "selection") {
-      return clientSelectedAssets.map((a) => ({
+      return filteredClientSelectedAssets.map((a) => ({
         id: a.id,
         name: a.originalName,
         src: a.previewUrl ?? a.thumbUrl,
         isVideo: isDemoAssetVideo(a),
       }));
     }
-    return finalAssets.map((f) => ({
+    return filteredFinalAssets.map((f) => ({
       id: f.id,
       name: f.name,
       src: f.url,
       isVideo: isDemoFinalAssetVideo(f),
     }));
-  }, [tab, rawAssets, clientSelectedAssets, finalAssets]);
+  }, [tab, filteredRawAssets, filteredClientSelectedAssets, filteredFinalAssets]);
 
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState(1);
@@ -343,6 +438,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     setLightboxId(null);
     setLightboxZoom(1);
   }, [tab]);
+
+  useEffect(() => {
+    if (savedMaxClientSelections == null) {
+      setSelectionLimitUnlimited(true);
+      setSelectionLimitInput("20");
+    } else {
+      setSelectionLimitUnlimited(false);
+      setSelectionLimitInput(String(savedMaxClientSelections));
+    }
+  }, [savedMaxClientSelections]);
 
   const lbNavIndex = lightboxId
     ? lightboxNavItems.findIndex((item) => item.id === lightboxId)
@@ -407,6 +512,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   useEffect(() => {
     setSelectedRawIds(new Set());
     setSelectedFinalIds(new Set());
+    setActiveSetFilter("all");
   }, [folderId]);
 
   useEffect(() => {
@@ -434,11 +540,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   }, [finalIdsKey, finalAssets]);
 
   const rawAllSelected =
-    rawAssets.length > 0 && rawAssets.every((a) => selectedRawIds.has(a.id));
-  const rawSomeSelected = selectedRawIds.size > 0 && !rawAllSelected;
+    filteredRawAssets.length > 0 && filteredRawAssets.every((a) => selectedRawIds.has(a.id));
+  const rawSomeSelected = filteredRawAssets.some((a) => selectedRawIds.has(a.id)) && !rawAllSelected;
   const finalAllSelected =
-    finalAssets.length > 0 && finalAssets.every((f) => selectedFinalIds.has(f.id));
-  const finalSomeSelected = selectedFinalIds.size > 0 && !finalAllSelected;
+    filteredFinalAssets.length > 0 && filteredFinalAssets.every((f) => selectedFinalIds.has(f.id));
+  const finalSomeSelected =
+    filteredFinalAssets.some((f) => selectedFinalIds.has(f.id)) && !finalAllSelected;
 
   useEffect(() => {
     const el = rawSelectAllRef.current;
@@ -482,14 +589,27 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     [],
   );
 
+  const activeUploadSetId = useMemo((): string | null | undefined => {
+    if (activeSetFilter === "general") return null;
+    if (activeSetFilter === "all") return undefined;
+    return activeSetFilter;
+  }, [activeSetFilter]);
+
   const mergeFinalFormOpts = useCallback(
     (
       dup: DuplicateUploadAction,
       files: File[],
       selectionMediaId?: string,
+      setId?: string | null,
     ): UploadFolderFinalMediaFormOptions => {
       const d = pendingFinalDeliveryRef.current;
-      return finalUploadFormOptions(dup, files, selectionMediaId, d ?? { clientHasPaidForFinals: true });
+      return finalUploadFormOptions(
+        dup,
+        files,
+        selectionMediaId,
+        d ?? { clientHasPaidForFinals: true },
+        setId,
+      );
     },
     [],
   );
@@ -514,6 +634,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       const dupPreview = await postFolderMediaDuplicatePreview(folder._id, {
         kind: "final",
         filenames: files.map((f) => f.name),
+        ...(activeUploadSetId !== undefined ? { setId: activeUploadSetId } : {}),
       });
       if (dupPreview.hasConflicts) {
         awaitingConflictChoice = true;
@@ -524,11 +645,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 "final",
                 files.map((f) => f.name),
                 folder,
+                activeUploadSetId,
               );
         setDuplicateFilenamePrompt({
           kind: "final",
           files,
           selectionMediaId,
+          setId: activeUploadSetId,
           conflictingNames,
         });
         return;
@@ -546,7 +669,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         folder._id,
         files,
         uploadProgressHandler("final"),
-        mergeFinalFormOpts(getDuplicateUploadPreference(), files, selectionMediaId),
+        mergeFinalFormOpts(
+          getDuplicateUploadPreference(),
+          files,
+          selectionMediaId,
+          activeUploadSetId,
+        ),
       );
       await refreshFolder();
       showToast(
@@ -608,6 +736,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
 
   async function onRawUpload(files: File[]) {
     if (!folder || busy || files.length === 0) return;
+    const targetSetId = activeUploadSetId;
     setBusy(true);
     setUploadProgress({ kind: "raw", phase: "preparing", computable: false, percent: 0 });
     let awaitingConflictChoice = false;
@@ -615,6 +744,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       const dupPreview = await postFolderMediaDuplicatePreview(folder._id, {
         kind: "raw",
         filenames: files.map((f) => f.name),
+        ...(targetSetId !== undefined ? { setId: targetSetId } : {}),
       });
       if (dupPreview.hasConflicts) {
         awaitingConflictChoice = true;
@@ -625,8 +755,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 "raw",
                 files.map((f) => f.name),
                 folder,
+                targetSetId,
               );
-        setDuplicateFilenamePrompt({ kind: "raw", files, conflictingNames });
+        setDuplicateFilenamePrompt({ kind: "raw", files, conflictingNames, setId: targetSetId });
         return;
       }
 
@@ -642,7 +773,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         folder._id,
         files,
         uploadProgressHandler("raw"),
-        rawUploadFormOptions(getDuplicateUploadPreference()),
+        rawUploadFormOptions(getDuplicateUploadPreference(), targetSetId),
       );
       await refreshFolder();
       showToast(`${files.length} file(s) uploaded.`, "success");
@@ -680,14 +811,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           folder._id,
           p.files,
           uploadProgressHandler("raw"),
-          rawUploadFormOptions("replace"),
+          rawUploadFormOptions("replace", p.setId),
         );
       } else {
         await uploadFolderFinalMedia(
           folder._id,
           p.files,
           uploadProgressHandler("final"),
-          mergeFinalFormOpts("replace", p.files, p.selectionMediaId),
+          mergeFinalFormOpts("replace", p.files, p.selectionMediaId, p.setId),
         );
       }
       await refreshFolder();
@@ -749,7 +880,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           folder._id,
           filesToUpload,
           uploadProgressHandler("raw"),
-          rawUploadFormOptions("ignore"),
+          rawUploadFormOptions("ignore", p.setId),
         );
         ignored = result?.ignoredDuplicatesCount ?? 0;
       } else {
@@ -757,7 +888,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           folder._id,
           filesToUpload,
           uploadProgressHandler("final"),
-          mergeFinalFormOpts("ignore", filesToUpload, p.selectionMediaId),
+          mergeFinalFormOpts("ignore", filesToUpload, p.selectionMediaId, p.setId),
         );
         ignored = result?.ignoredDuplicatesCount ?? 0;
       }
@@ -860,6 +991,59 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     setFocalEditOpen(false);
   }
 
+  function pickCoverImage() {
+    coverFileInputRef.current?.click();
+  }
+
+  async function onCoverImageFileChange(ev: ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file || !folder) return;
+    if (!file.type.startsWith("image/")) {
+      showToast("Please choose an image file.", "error");
+      return;
+    }
+    const blobPreview = URL.createObjectURL(file);
+    setLocalCoverPreviewUrl((prev) => {
+      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return blobPreview;
+    });
+
+    setUploadingCover(true);
+    try {
+      const focal = focalEditOpen ? focalDraft : parseFolderCoverFocal(folder);
+      await updateFolder(folder._id, {
+        coverImage: file,
+        useDefaultCover: false,
+        coverFocalX: focal.x,
+        coverFocalY: focal.y,
+      });
+      const refreshed = await refreshFolder();
+      setFocalDraft(parseFolderCoverFocal(refreshed));
+      setCoverCacheVersion(Date.now());
+      setLocalCoverPreviewUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return null;
+      });
+      showToast("Cover image updated.", "success");
+    } catch (e) {
+      setLocalCoverPreviewUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return null;
+      });
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not upload cover image.",
+        "error",
+      );
+    } finally {
+      setUploadingCover(false);
+    }
+  }
+
   async function onBackgroundMusicFileChange(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0];
     ev.target.value = "";
@@ -953,12 +1137,28 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
 
   function setRawSelectAll(select: boolean) {
     if (mediaDeleteBlocked()) return;
-    setSelectedRawIds(select ? new Set(rawAssets.map((a) => a.id)) : new Set());
+    setSelectedRawIds((prev) => {
+      const next = new Set(prev);
+      if (select) {
+        for (const a of filteredRawAssets) next.add(a.id);
+      } else {
+        for (const a of filteredRawAssets) next.delete(a.id);
+      }
+      return next;
+    });
   }
 
   function setFinalSelectAll(select: boolean) {
     if (mediaDeleteBlocked()) return;
-    setSelectedFinalIds(select ? new Set(finalAssets.map((f) => f.id)) : new Set());
+    setSelectedFinalIds((prev) => {
+      const next = new Set(prev);
+      if (select) {
+        for (const f of filteredFinalAssets) next.add(f.id);
+      } else {
+        for (const f of filteredFinalAssets) next.delete(f.id);
+      }
+      return next;
+    });
   }
 
   async function onDeleteRawAsset(mediaId: string) {
@@ -1205,6 +1405,152 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     }
   }
 
+  async function onCreateSet() {
+    if (!folder || creatingSet) return;
+    const name = newSetName.trim();
+    if (!name) return;
+    try {
+      setCreatingSet(true);
+      const next = await createFolderSet(folder._id, name);
+      setFolder(next.folder);
+      setNewSetName("");
+      setActiveSetFilter(next.set._id);
+      showToast(`Set "${next.set.name}" added.`, "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not create set.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setCreatingSet(false);
+    }
+  }
+
+  async function onSaveSetEdit(setId: string) {
+    if (!folder || savingSetId || deletingSetId) return;
+    const name = editingSetName.trim();
+    if (!name) {
+      showToast("Collection name cannot be empty.", "error");
+      return;
+    }
+    try {
+      setSavingSetId(setId);
+      const updated = await updateFolderSet(folder._id, setId, { name });
+      setFolder(updated);
+      setEditingSetId(null);
+      setEditingSetName("");
+      showToast("Collection updated.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not update collection.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setSavingSetId(null);
+    }
+  }
+
+  async function onDeleteSet(setId: string, setName: string) {
+    if (!folder || savingSetId || deletingSetId) return;
+    if (
+      !confirm(
+        `Delete collection "${setName}"? Existing media stays in the gallery and is moved back to General.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      setDeletingSetId(setId);
+      const updated = await deleteFolderSet(folder._id, setId);
+      setFolder(updated);
+      if (activeSetFilter === setId) setActiveSetFilter("all");
+      if (editingSetId === setId) {
+        setEditingSetId(null);
+        setEditingSetName("");
+      }
+      showToast("Collection deleted.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not delete collection.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setDeletingSetId(null);
+    }
+  }
+
+  const saveSelectionLimit = useCallback(async () => {
+    if (!folder || selectionLimitSaving || !selectionLimitDirty) return;
+    let nextMax: number | null = null;
+    if (!selectionLimitUnlimited) {
+      const n = Number.parseInt(selectionLimitInput.trim(), 10);
+      if (!Number.isFinite(n) || n < 1) {
+        showToast("Enter a limit of at least 1.", "error");
+        return;
+      }
+      if (n > 9999) {
+        showToast("Keep the limit under 10,000.", "error");
+        return;
+      }
+      nextMax = n;
+    }
+    try {
+      setSelectionLimitSaving(true);
+      await patchFolderShare(folder._id, { maxClientSelections: nextMax });
+      const refreshed = await refreshFolder();
+      showToast(
+        nextMax == null
+          ? "Clients can select unlimited photos."
+          : `Selection limit saved: ${nextMax}.`,
+        "success",
+      );
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not save selection limit.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setSelectionLimitSaving(false);
+    }
+  }, [
+    folder,
+    selectionLimitSaving,
+    selectionLimitDirty,
+    selectionLimitUnlimited,
+    selectionLimitInput,
+    showToast,
+    refreshFolder,
+  ]);
+
+  const coverSrc = useMemo(() => {
+    if (localCoverPreviewUrl) return localCoverPreviewUrl;
+    const base = folder ? (getFolderCoverUrl(folder) ?? FALLBACK_COVER) : FALLBACK_COVER;
+    if (coverCacheVersion > 0 && base !== FALLBACK_COVER) {
+      return appendCoverCacheBust(base, coverCacheVersion);
+    }
+    return base;
+  }, [folder, localCoverPreviewUrl, coverCacheVersion]);
+
   if (loading) {
     return <FolderDetailPageSkeleton />;
   }
@@ -1242,7 +1588,6 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
 
   const clientName = getFolderClientName(folder);
   const title = folder.eventName?.trim() || clientName;
-  const coverSrc = getFolderCoverUrl(folder) ?? FALLBACK_COVER;
   const eventDateLabel = new Date(folder.eventDate).toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
@@ -1273,6 +1618,11 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       count: finalAssets.length,
     },
   ];
+  const totalMediaCount = rawAssets.length + finalAssets.length;
+  const selectionLimitValue = savedMaxClientSelections;
+  const selectionProgressPercent = selectionLimitValue
+    ? Math.min(100, Math.round((clientSelectedAssets.length / selectionLimitValue) * 100))
+    : 0;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-12">
@@ -1300,74 +1650,60 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </span>
       </nav>
 
-      {/* Background music — compact toolbar */}
-      <div className="relative overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm shadow-black/5 dark:border-zinc-700 dark:bg-zinc-950 dark:shadow-black/25">
-        <div
-          className="relative flex flex-wrap items-center gap-2.5 rounded-[0.9rem] px-2.5 py-2 sm:gap-3 sm:px-3.5 sm:py-2.5"
-          role="group"
-          aria-label="Background music for client gallery"
-        >
-          <input
-            ref={musicFileInputRef}
-            type="file"
-            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus,.webm,application/ogg"
-            className="sr-only"
-            onChange={(ev) => void onBackgroundMusicFileChange(ev)}
-          />
-          <span className="sr-only">Background music</span>
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm shadow-brand/25"
-            aria-hidden
-          >
+      {/* Background music player */}
+      <div
+        className="relative overflow-hidden rounded-2xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm shadow-black/5 dark:border-zinc-700 dark:bg-zinc-950 dark:shadow-black/25"
+        role="group"
+        aria-label="Background music for client gallery"
+      >
+        <input
+          ref={musicFileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus,.webm,application/ogg"
+          className="sr-only"
+          onChange={(ev) => void onBackgroundMusicFileChange(ev)}
+        />
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand dark:bg-brand/20">
             <Music2 className="h-4 w-4" strokeWidth={2.25} />
           </div>
-          {folder.backgroundMusicUrl ? (
-            <div className="min-w-0 flex-1 overflow-hidden rounded-xl bg-zinc-50 px-1.5 py-1 ring-1 ring-inset ring-zinc-200/90 dark:bg-zinc-900 dark:ring-zinc-600/80 sm:max-w-[13rem]">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {folder.backgroundMusic ? folder.backgroundMusic : "No soundtrack selected"}
+            </p>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Ambient gallery music</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {folder.backgroundMusicUrl ? (
               <audio
                 controls
                 src={folder.backgroundMusicUrl}
-                className="h-8 w-full max-w-full accent-zinc-700 dark:accent-zinc-300"
+                className="h-8 w-[14rem] max-w-full accent-zinc-700 dark:accent-zinc-300"
                 preload="metadata"
               />
-            </div>
-          ) : (
-            <div
-              className="pointer-events-none min-h-8 min-w-[5rem] flex-1 rounded-xl bg-zinc-100 ring-1 ring-inset ring-zinc-200/80 dark:bg-zinc-800/80 dark:ring-zinc-700/60"
-              aria-hidden
-            />
-          )}
-          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            ) : (
+              <div className="h-8 w-[10rem] rounded-lg bg-zinc-100 dark:bg-zinc-800" aria-hidden />
+            )}
             <button
               type="button"
               disabled={musicBusy}
               onClick={() => musicFileInputRef.current?.click()}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-700 shadow-sm shadow-black/5 ring-1 ring-zinc-200/90 transition hover:scale-[1.04] hover:bg-zinc-50 hover:shadow-md hover:shadow-black/8 active:scale-100 disabled:pointer-events-none disabled:opacity-45 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-600 dark:hover:bg-zinc-800"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
               aria-label={folder.backgroundMusicUrl ? "Replace background music" : "Upload background music"}
             >
-              {musicBusy ? (
-                <span className="text-[10px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
-                  …
-                </span>
-              ) : (
-                <Upload className="h-4 w-4" aria-hidden />
-              )}
+              <Upload className="h-4 w-4" aria-hidden />
             </button>
             {folder.backgroundMusicUrl || folder.backgroundMusic ? (
               <button
                 type="button"
                 disabled={musicBusy}
                 onClick={() => void onRemoveBackgroundMusic()}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-red-600 shadow-sm shadow-black/5 ring-1 ring-red-200/80 transition hover:scale-[1.04] hover:bg-red-50 hover:shadow-md hover:shadow-black/8 active:scale-100 disabled:pointer-events-none disabled:opacity-45 dark:bg-zinc-900 dark:text-red-400 dark:ring-red-900/45 dark:hover:bg-red-950/30"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:opacity-45 dark:border-red-900/60 dark:bg-zinc-900 dark:text-red-400 dark:hover:bg-red-950/30"
                 aria-label="Remove background music"
               >
                 <Trash2 className="h-4 w-4" aria-hidden />
               </button>
             ) : null}
-            <span
-              className="mx-0.5 hidden h-6 w-px shrink-0 bg-zinc-200 dark:bg-zinc-600 sm:inline"
-              aria-hidden
-            />
-            <span className="sr-only">Play background music for clients</span>
             <button
               type="button"
               role="switch"
@@ -1377,18 +1713,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 void onToggleBackgroundMusicForClients(!(folder.backgroundMusicEnabled !== false))
               }
               className={cn(
-                "relative inline-flex h-8 w-[3.25rem] shrink-0 items-center rounded-full border-2 transition hover:opacity-95 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45",
+                "relative inline-flex h-8 w-[3.25rem] shrink-0 items-center rounded-full border-2 transition disabled:opacity-45",
                 folder.backgroundMusicEnabled !== false
-                  ? "border-zinc-700 bg-zinc-900 shadow-sm shadow-black/20 dark:border-zinc-500 dark:bg-zinc-100"
+                  ? "border-zinc-700 bg-zinc-900 dark:border-zinc-500 dark:bg-zinc-100"
                   : "border-zinc-200 bg-zinc-200 dark:border-zinc-600 dark:bg-zinc-800",
               )}
             >
               <span
                 className={cn(
-                  "absolute top-1 h-6 w-6 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-[left,transform] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] dark:ring-black/20",
-                  folder.backgroundMusicEnabled !== false
-                    ? "left-[1.5rem] dark:bg-zinc-900"
-                    : "left-0.5",
+                  "absolute top-1 h-6 w-6 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-[left] duration-200 dark:ring-black/20",
+                  folder.backgroundMusicEnabled !== false ? "left-[1.5rem] dark:bg-zinc-900" : "left-0.5",
                 )}
                 aria-hidden
               />
@@ -1408,6 +1742,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         <div className="absolute inset-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
+            key={coverSrc}
             src={coverSrc}
             alt=""
             className="absolute inset-0 h-full w-full object-cover transition-[object-position] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
@@ -1476,11 +1811,32 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 {folder.description}
               </p>
             ) : null}
-            <div className="flex flex-wrap pt-0.5">
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={pickCoverImage}
+                disabled={busy || savingFocal || uploadingCover}
+                aria-label="Upload cover image"
+                title="Upload cover image"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 md:size-9"
+              >
+                {uploadingCover ? (
+                  <RefreshCw className="h-4 w-4 shrink-0 animate-spin opacity-90" aria-hidden />
+                ) : (
+                  <ImagePlus className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                )}
+              </button>
+              <input
+                ref={coverFileInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                onChange={(e) => void onCoverImageFileChange(e)}
+              />
               <button
                 type="button"
                 onClick={() => (focalEditOpen ? cancelFocalEditor() : openFocalEditor())}
-                disabled={busy || savingFocal}
+                disabled={busy || savingFocal || uploadingCover}
                 aria-expanded={focalEditOpen}
                 aria-controls="folder-cover-framing-panel"
                 aria-label={focalEditOpen ? "Close cover framing editor" : "Cover framing"}
@@ -1554,166 +1910,205 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </div>
       </section>
 
-      {/* Share — compact */}
-      <section className="rounded-xl border border-zinc-200/90 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white shadow-sm shadow-brand/20">
-              <Share2 className="h-4 w-4" aria-hidden />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
-                Client gallery link
-              </h2>
-              <p className="sr-only">
-                Share this read-only URL with your client so they can view and select photos.
-              </p>
-            </div>
-          </div>
-          {folder.share?.selectionSubmittedAt ? (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300">
-              Submitted{" "}
-              {new Date(folder.share.selectionSubmittedAt).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="mt-3 flex overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50/80 shadow-sm focus-within:ring-2 focus-within:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-900/50">
-          <div className="flex shrink-0 items-center border-r border-zinc-200 bg-zinc-100/70 px-2 dark:border-zinc-700 dark:bg-zinc-900/80">
-            <Link2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
-          </div>
-          <input
-            readOnly
-            className="min-w-0 flex-1 cursor-default truncate border-0 bg-transparent px-2 py-2 font-mono text-[11px] leading-snug text-zinc-800 outline-none dark:text-zinc-100 sm:text-xs"
-            value={shareActive ? shareUrl : "Sharing not enabled yet."}
-            title={shareActive ? shareUrl : undefined}
-            aria-label="Share URL"
-          />
-          <div className="flex shrink-0 divide-x divide-zinc-200 border-l border-zinc-200 dark:divide-zinc-700 dark:border-zinc-700">
-            <button
-              type="button"
-              disabled={!shareActive}
-              onClick={async () => {
-                if (!shareUrl) return;
-                try {
-                  await navigator.clipboard.writeText(shareUrl);
-                  setLinkCopied(true);
-                  window.setTimeout(() => setLinkCopied(false), 1500);
-                } catch {
-                  showToast("Could not copy link.", "error");
-                }
-              }}
-              className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-35 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
-              aria-label={linkCopied ? "Copied" : "Copy share link"}
-            >
-              {linkCopied ? (
-                <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
-              ) : (
-                <Copy className="h-4 w-4" aria-hidden />
-              )}
-            </button>
-            {shareActive ? (
-              <a
-                href={shareUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
-                aria-label="Open share link"
-              >
-                <ExternalLink className="h-4 w-4" aria-hidden />
-              </a>
-            ) : null}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onRegenerateLink}
-              className="inline-flex size-9 items-center justify-center bg-white text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
-              aria-label="Regenerate share link"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-2.5 flex flex-col gap-1.5 sm:mt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
-          <label className="inline-flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Expires</span>
-            <select
-              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-900 outline-none transition focus:ring-2 focus:ring-brand/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-              value={linkExpiry}
-              disabled={busy}
-              onChange={(e) => setLinkExpiry(e.target.value)}
-              aria-label="New link expiry"
-              title="Used when you regenerate the link."
-            >
-              {expiryPresets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="text-[10px] leading-snug text-zinc-400 dark:text-zinc-500 sm:max-w-md">
-            New expiry applies the next time you regenerate.
-          </p>
-        </div>
-      </section>
-
-      {/* Tabs */}
-      <div
-        role="tablist"
-        aria-label="Gallery sections"
-        className="flex gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/50"
-      >
-        {tabItems.map(({ key, label, sub, icon: Icon, count }) => {
-          const active = tab === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(key)}
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition md:gap-3 md:px-3.5 md:py-2.5",
-                active
-                  ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80 dark:bg-zinc-950 dark:text-zinc-50 dark:ring-zinc-700/80"
-                  : "text-zinc-600 hover:bg-white/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/40 dark:hover:text-zinc-100",
-              )}
-            >
-              <span
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md md:h-9 md:w-9",
-                  active
-                    ? "bg-brand text-white shadow-sm shadow-brand/25"
-                    : "bg-zinc-200/90 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="block truncate text-sm font-semibold">{label}</span>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem] lg:items-start">
+        <div className="space-y-4">
+          {/* Tabs */}
+          <div
+            role="tablist"
+            aria-label="Gallery sections"
+            className="flex gap-1.5 rounded-2xl border border-zinc-200/80 bg-white p-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            {tabItems.map(({ key, label, icon: Icon, count }) => {
+              const active = tab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setTab(key)}
+                  className={cn(
+                    "inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                    active
+                      ? "bg-brand/10 text-brand ring-1 ring-brand/20 dark:bg-brand/20 dark:text-brand-100"
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="truncate">{label}</span>
                   {count > 0 ? (
-                    <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-700 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-700">
                       {count}
                     </span>
                   ) : null}
-                </span>
-                <span className="mt-0.5 block truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-500">
-                  {sub}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                </button>
+              );
+            })}
+          </div>
 
-      {/* Tab panels */}
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
+          <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex flex-wrap items-center gap-2">
+              {folderSets.length > 0 ? (
+                <>
+              <button
+                type="button"
+                onClick={() => setActiveSetFilter("all")}
+                className={cn(
+                  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
+                  activeSetFilter === "all"
+                    ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                )}
+                aria-pressed={activeSetFilter === "all"}
+              >
+                All Media
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSetFilter("general")}
+                className={cn(
+                  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
+                  activeSetFilter === "general"
+                    ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                )}
+                aria-pressed={activeSetFilter === "general"}
+              >
+                General
+                <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
+                  {generalCount}
+                </span>
+              </button>
+              {folderSets.map((setItem) => (
+                <button
+                  type="button"
+                  key={setItem._id}
+                  onClick={() => {
+                    setActiveSetFilter(setItem._id);
+                    if (editingSetId && editingSetId !== setItem._id) {
+                      setEditingSetId(null);
+                      setEditingSetName("");
+                    }
+                  }}
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition",
+                    activeSetFilter === setItem._id
+                      ? "border-brand/30 bg-brand/10 text-brand dark:border-brand/40 dark:bg-brand/20 dark:text-brand-100"
+                      : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                  )}
+                  title={setItem.name}
+                  aria-pressed={activeSetFilter === setItem._id}
+                >
+                  {setItem.name}
+                  <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
+                    {getSetCount(setItem._id)}
+                  </span>
+                </button>
+              ))}
+              {activeSetItem ? (
+                <div className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
+                  {editingSetId === activeSetItem._id ? (
+                    <>
+                      <input
+                        type="text"
+                        value={editingSetName}
+                        onChange={(e) => setEditingSetName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void onSaveSetEdit(activeSetItem._id);
+                          if (e.key === "Escape") {
+                            setEditingSetId(null);
+                            setEditingSetName("");
+                          }
+                        }}
+                        className="w-32 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-600 dark:bg-zinc-900"
+                        aria-label={`Rename ${activeSetItem.name}`}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void onSaveSetEdit(activeSetItem._id)}
+                        disabled={
+                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
+                        }
+                        className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSetId(null);
+                          setEditingSetName("");
+                        }}
+                        disabled={
+                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
+                        }
+                        className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSetId(activeSetItem._id);
+                          setEditingSetName(activeSetItem.name);
+                        }}
+                        disabled={
+                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
+                        }
+                        aria-label={`Edit collection ${activeSetItem.name}`}
+                        title="Edit collection"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-45 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteSet(activeSetItem._id, activeSetItem.name)}
+                        disabled={
+                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
+                        }
+                        aria-label={`Delete collection ${activeSetItem.name}`}
+                        title="Delete collection"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-red-600 transition hover:bg-red-50 disabled:opacity-45 dark:text-red-400 dark:hover:bg-red-950/30"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null}
+                </>
+              ) : null}
+              <input
+                type="text"
+                value={newSetName}
+                disabled={creatingSet}
+                onChange={(e) => setNewSetName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void onCreateSet();
+                }}
+                placeholder="New collection"
+                aria-label="New set name"
+                className="min-w-[9rem] flex-1 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              <button
+                type="button"
+                disabled={creatingSet || !newSetName.trim()}
+                onClick={() => void onCreateSet()}
+                className="inline-flex items-center justify-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              >
+                {creatingSet ? <InlineActionSkeleton /> : <Plus className="h-3.5 w-3.5" aria-hidden />}
+                New Collection
+              </button>
+            </div>
+          </div>
+
+          {/* Tab panels */}
+          <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
         {uploadProgress ? (
           <div className="mb-6">
             <UploadProgressBanner
@@ -1737,7 +2132,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   Upload raw files to this gallery. They are sent to the server immediately.
                 </p>
               </div>
-              {rawAssets.length > 0 ? (
+              {filteredRawAssets.length > 0 ? (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
                   <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
                     <input
@@ -1751,15 +2146,18 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     Select all
                   </label>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {selectedRawIds.size > 0 ? (
+                    {filteredRawAssets.some((a) => selectedRawIds.has(a.id)) ? (
                       <span className="text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
-                        {selectedRawIds.size} selected
+                        {filteredRawAssets.filter((a) => selectedRawIds.has(a.id)).length} selected
                       </span>
                     ) : null}
                     <button
                       type="button"
                       onClick={() => void onDeleteSelectedRaw()}
-                      disabled={mediaDeleteBlocked() || selectedRawIds.size === 0}
+                      disabled={
+                        mediaDeleteBlocked() ||
+                        filteredRawAssets.filter((a) => selectedRawIds.has(a.id)).length === 0
+                      }
                       className="inline-flex min-h-[2.25rem] min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
                     >
                       {deletingKey === "raw:bulk" ? (
@@ -1784,6 +2182,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 </div>
               ) : null}
             </div>
+            {folderSets.length > 0 && activeSetFilter === "all" ? (
+              <p className="rounded-xl border border-dashed border-brand/30 bg-brand/5 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-300">
+                Select a collection below to upload into that set. Choose{" "}
+                <span className="font-semibold">General</span> for uncategorized files.
+              </p>
+            ) : null}
             <UploadDragger
               label="Drop raw files here"
               hint="Images (JPG, PNG, WebP, GIF) or video (MP4, MOV, WebM, etc.)."
@@ -1791,7 +2195,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               disabled={busy}
               onFiles={(files) => void onRawUpload(files)}
             />
-            {rawAssets.length === 0 ? (
+            {filteredRawAssets.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 py-14 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
                 <Images className="h-8 w-8 text-zinc-300 dark:text-zinc-600" aria-hidden />
                 <p className="mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200">
@@ -1803,7 +2207,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               </div>
             ) : (
               <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {rawAssets.map((a) => (
+                {filteredRawAssets.map((a) => (
                   <li
                     key={a.id}
                     className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50/30 shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-900/40 dark:ring-white/[0.04] dark:hover:border-zinc-500"
@@ -1879,7 +2283,66 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 Only photos the client chose in the share gallery appear here.
               </p>
             </div>
-            {clientSelectedAssets.length === 0 ? (
+            <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Selection limit
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectionLimitUnlimited(true)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-xs font-semibold",
+                    selectionLimitUnlimited
+                      ? "bg-brand text-white"
+                      : "bg-white text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
+                  )}
+                >
+                  Unlimited
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectionLimitUnlimited(false)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-xs font-semibold",
+                    !selectionLimitUnlimited
+                      ? "bg-brand text-white"
+                      : "bg-white text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
+                  )}
+                >
+                  Set limit
+                </button>
+                {!selectionLimitUnlimited ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={9999}
+                    value={selectionLimitInput}
+                    onChange={(e) => setSelectionLimitInput(e.target.value)}
+                    className="w-24 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-xs font-medium tabular-nums outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-950"
+                    aria-label="Maximum client selections"
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  disabled={!selectionLimitDirty || selectionLimitSaving}
+                  onClick={() => void saveSelectionLimit()}
+                  className="ml-auto inline-flex items-center justify-center rounded-md bg-brand px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  {selectionLimitSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Client selected: <span className="font-semibold tabular-nums">{clientSelectedAssets.length}</span>
+                {savedMaxClientSelections != null ? (
+                  <>
+                    {" "}
+                    / <span className="font-semibold tabular-nums">{savedMaxClientSelections}</span>
+                  </>
+                ) : null}
+              </p>
+            </div>
+            {filteredClientSelectedAssets.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 py-12 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
                 <p className="text-sm text-zinc-600 dark:text-zinc-300">
                   No client selections yet. When clients pick shots from the share link,
@@ -1888,7 +2351,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               </div>
             ) : (
               <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {clientSelectedAssets.map((a) => (
+                {filteredClientSelectedAssets.map((a) => (
                   <li
                     key={a.id}
                     className="overflow-hidden rounded-xl border border-rose-200/70 bg-white shadow-sm ring-1 ring-rose-100/60 dark:border-rose-900/50 dark:bg-zinc-950 dark:ring-rose-950/40"
@@ -1945,7 +2408,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                   Upload finished edits for client delivery.
                 </p>
-                {finalAssets.length > 0 ? (
+                {filteredFinalAssets.length > 0 ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span
                       className={cn(
@@ -1992,7 +2455,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   </div>
                 ) : null}
               </div>
-              {finalAssets.length > 0 ? (
+              {filteredFinalAssets.length > 0 ? (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
                   <label className="inline-flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
                     <input
@@ -2006,15 +2469,18 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     Select all
                   </label>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {selectedFinalIds.size > 0 ? (
+                    {filteredFinalAssets.some((f) => selectedFinalIds.has(f.id)) ? (
                       <span className="text-[11px] font-medium tabular-nums text-zinc-500 dark:text-zinc-400">
-                        {selectedFinalIds.size} selected
+                        {filteredFinalAssets.filter((f) => selectedFinalIds.has(f.id)).length} selected
                       </span>
                     ) : null}
                     <button
                       type="button"
                       onClick={() => void onDeleteSelectedFinals()}
-                      disabled={mediaDeleteBlocked() || selectedFinalIds.size === 0}
+                      disabled={
+                        mediaDeleteBlocked() ||
+                        filteredFinalAssets.filter((f) => selectedFinalIds.has(f.id)).length === 0
+                      }
                       className="inline-flex min-h-[2.25rem] min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
                     >
                       {deletingKey === "final:bulk" ? (
@@ -2046,13 +2512,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               disabled={busy}
               onFiles={(files) => void openFinalUploadWizard(files)}
             />
-            {finalAssets.length === 0 ? (
+            {filteredFinalAssets.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-200 py-12 text-center text-sm text-zinc-500 dark:border-zinc-800">
                 No finals uploaded yet.
               </div>
             ) : (
               <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {finalAssets.map((f) => (
+                {filteredFinalAssets.map((f) => (
                   <li
                     key={f.id}
                     className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/[0.04] dark:hover:border-zinc-500"
@@ -2123,6 +2589,145 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             )}
           </div>
         ) : null}
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Share Gallery</h2>
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                {shareActive ? "Published" : "Draft"}
+              </span>
+            </div>
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50/80 dark:border-zinc-700 dark:bg-zinc-900/50">
+              <div className="flex items-center border-b border-zinc-200 bg-white px-2 dark:border-zinc-700 dark:bg-zinc-950">
+                <Link2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+                <input
+                  readOnly
+                  className="min-w-0 flex-1 cursor-default truncate border-0 bg-transparent px-2 py-2 text-xs text-zinc-700 outline-none dark:text-zinc-100"
+                  value={shareActive ? shareUrl : "Sharing not enabled yet."}
+                  title={shareActive ? shareUrl : undefined}
+                  aria-label="Share URL"
+                />
+                <button
+                  type="button"
+                  disabled={!shareActive}
+                  onClick={async () => {
+                    if (!shareUrl) return;
+                    try {
+                      await navigator.clipboard.writeText(shareUrl);
+                      setLinkCopied(true);
+                      window.setTimeout(() => setLinkCopied(false), 1500);
+                    } catch {
+                      showToast("Could not copy link.", "error");
+                    }
+                  }}
+                  className="inline-flex size-7 items-center justify-center rounded-md text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  aria-label={linkCopied ? "Copied" : "Copy share link"}
+                >
+                  {linkCopied ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                </button>
+              </div>
+              <div className="flex gap-2 p-2">
+                <a
+                  href={shareActive ? shareUrl : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-semibold",
+                    shareActive
+                      ? "bg-brand text-white hover:bg-brand-hover"
+                      : "pointer-events-none bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400",
+                  )}
+                >
+                  Open Link
+                </a>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={onRegenerateLink}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  aria-label="Regenerate share link"
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                </button>
+                <select
+                  className="h-9 min-w-[4.5rem] rounded-lg border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-brand/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  value={linkExpiry}
+                  disabled={busy}
+                  onChange={(e) => setLinkExpiry(e.target.value)}
+                  aria-label="New link expiry"
+                >
+                  {expiryPresets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Gallery Status</h3>
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Total files</span>
+                <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {totalMediaCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Client picks</span>
+                <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {clientSelectedAssets.length}
+                  {selectionLimitValue ? ` / ${selectionLimitValue}` : ""}
+                </span>
+              </div>
+              {selectionLimitValue ? (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                    <span>Selection progress</span>
+                    <span className="font-semibold tabular-nums">{selectionProgressPercent}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-800">
+                    <div
+                      className="h-2 rounded-full bg-brand transition-all"
+                      style={{ width: `${selectionProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Final delivery</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                    finalImagesLocked
+                      ? "bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+                      : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200",
+                  )}
+                >
+                  {finalImagesLocked ? "Locked" : "Unlocked"}
+                </span>
+              </div>
+              {folder.share?.selectionSubmittedAt ? (
+                <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  Selection submitted{" "}
+                  {new Date(folder.share.selectionSubmittedAt).toLocaleString(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </aside>
       </div>
 
       {lockFinalDeliveryOpen ? (

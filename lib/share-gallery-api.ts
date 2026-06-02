@@ -1,6 +1,17 @@
 import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 import { parseFolderCoverFocal } from "@/lib/folders-api";
+import { parseSetIdFromApiRow } from "@/lib/folders/helpers";
 import { extractMessage, HttpError, parseJson } from "@/lib/http";
+
+export type ShareGallerySet = {
+  _id: string;
+  name: string;
+  sortOrder?: number;
+  rawCount?: number;
+  selectionCount?: number;
+  finalCount?: number;
+  mediaCount?: number;
+};
 
 export type ShareGalleryAsset = {
   id: string;
@@ -11,6 +22,8 @@ export type ShareGalleryAsset = {
   /** MIME type of the original upload when provided (e.g. image/jpeg, video/mp4). */
   mimeType?: string;
   selection: "SELECTED" | "UNSELECTED";
+  /** Sub-gallery set id; null/omitted = General. */
+  setId?: string | null;
 };
 
 export type ShareGalleryFinal = {
@@ -24,6 +37,7 @@ export type ShareGalleryFinal = {
   locked?: boolean;
   /** Optional explicit preview URL for locked state (watermarked / reduced). */
   lockedPreviewUrl?: string;
+  setId?: string | null;
 };
 
 export type NormalizedShareGallery = {
@@ -43,6 +57,8 @@ export type NormalizedShareGallery = {
   canEditSelections: boolean;
   /** Photographer lock only; never set by client submit. */
   selectionLocked: boolean;
+  /** Max photos the client may select; `null` = unlimited. */
+  maxClientSelections: number | null;
   /** When false, hide final delivery tab until photographer enables it. */
   finalDelivery?: boolean;
   /** Hint for client UI to apply screenshot/download discouragement. */
@@ -53,6 +69,8 @@ export type NormalizedShareGallery = {
   backgroundMusicEnabled?: boolean;
   assets: ShareGalleryAsset[];
   finals: ShareGalleryFinal[];
+  /** Named collections within this gallery (empty = hide collection chips). */
+  sets: ShareGallerySet[];
   counts?: { uploads: number; selected: number; finals: number };
 };
 
@@ -66,6 +84,26 @@ function str(v: unknown): string {
 
 function bool(v: unknown, defaultVal = false): boolean {
   return typeof v === "boolean" ? v : defaultVal;
+}
+
+function maxClientSelectionsFromRaw(o: Raw | null | undefined): number | null {
+  if (!o) return null;
+  for (const key of [
+    "maxClientSelections",
+    "max_client_selections",
+    "selectionLimit",
+    "selection_limit",
+    "maxSelections",
+    "max_selections",
+  ]) {
+    const v = o[key];
+    if (v === null || v === undefined || v === "") continue;
+    if (v === 0 || v === "0") return null;
+    const n = typeof v === "number" ? v : Number(String(v).trim().replace(/,/g, ""));
+    if (!Number.isFinite(n) || n < 1) continue;
+    return Math.min(9999, Math.floor(n));
+  }
+  return null;
 }
 
 /** Pick a URL string from a flat field or a nested `{ url | src | href | coverImageUrl }` object (API variance). */
@@ -177,6 +215,7 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
     bool(o.selected) ||
     sel === "SELECTED" ||
     str(o.clientSelection).toUpperCase() === "SELECTED";
+  const setId = parseSetIdFromApiRow(o);
 
   return {
     id,
@@ -185,6 +224,7 @@ function assetFromRow(item: unknown, idx: number): ShareGalleryAsset | null {
     ...(previewUrl ? { previewUrl } : {}),
     ...(mimeType ? { mimeType } : {}),
     selection: selected ? "SELECTED" : "UNSELECTED",
+    setId,
   };
 }
 
@@ -231,6 +271,8 @@ function finalFromRow(item: unknown, idx: number): ShareGalleryFinal | null {
 
   if (!url && !lockedPreviewUrl) return null;
 
+  const setId = parseSetIdFromApiRow(o);
+
   return {
     id,
     name,
@@ -238,7 +280,85 @@ function finalFromRow(item: unknown, idx: number): ShareGalleryFinal | null {
     ...(mimeType ? { mimeType } : {}),
     locked,
     lockedPreviewUrl: lockedPreviewUrl || undefined,
+    setId,
   };
+}
+
+function normalizeShareSets(folder: Raw | null, root: Raw): ShareGallerySet[] {
+  const raw = folder?.sets ?? root.sets;
+  if (!Array.isArray(raw)) return [];
+  const sets: ShareGallerySet[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Raw;
+    const id = str(o._id) || str(o.id);
+    const name = str(o.name);
+    if (!id || !name) continue;
+    sets.push({
+      _id: id,
+      name,
+      sortOrder: typeof o.sortOrder === "number" ? o.sortOrder : undefined,
+      rawCount: typeof o.rawCount === "number" ? o.rawCount : undefined,
+      selectionCount: typeof o.selectionCount === "number" ? o.selectionCount : undefined,
+      finalCount: typeof o.finalCount === "number" ? o.finalCount : undefined,
+      mediaCount: typeof o.mediaCount === "number" ? o.mediaCount : undefined,
+    });
+  }
+  return sets.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+}
+
+function assetsFromUploadsBySet(
+  buckets: unknown,
+  selectedIds: Set<string>,
+): ShareGalleryAsset[] {
+  if (!Array.isArray(buckets) || buckets.length === 0) return [];
+  const assets: ShareGalleryAsset[] = [];
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== "object") continue;
+    const b = bucket as Raw;
+    const bucketSetId =
+      b.setId === null || b.set_id === null
+        ? null
+        : parseSetIdFromApiRow(b) ?? (str(b.setId) || str(b.set_id) || null);
+    const media = b.media ?? b.uploads ?? b.items ?? b.files;
+    if (!Array.isArray(media)) continue;
+    for (let i = 0; i < media.length; i++) {
+      const a = assetFromRow(media[i], assets.length);
+      if (!a) continue;
+      const rowSetId = parseSetIdFromApiRow(
+        media[i] && typeof media[i] === "object" ? (media[i] as Raw) : {},
+      );
+      a.setId = rowSetId ?? bucketSetId;
+      if (selectedIds.has(a.id)) a.selection = "SELECTED";
+      assets.push(a);
+    }
+  }
+  return assets;
+}
+
+function finalsFromFinalsBySet(buckets: unknown): ShareGalleryFinal[] {
+  if (!Array.isArray(buckets) || buckets.length === 0) return [];
+  const finals: ShareGalleryFinal[] = [];
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== "object") continue;
+    const b = bucket as Raw;
+    const bucketSetId =
+      b.setId === null || b.set_id === null
+        ? null
+        : parseSetIdFromApiRow(b) ?? (str(b.setId) || str(b.set_id) || null);
+    const media = b.media ?? b.finals ?? b.items ?? b.files;
+    if (!Array.isArray(media)) continue;
+    for (let i = 0; i < media.length; i++) {
+      const f = finalFromRow(media[i], finals.length);
+      if (!f) continue;
+      const rowSetId = parseSetIdFromApiRow(
+        media[i] && typeof media[i] === "object" ? (media[i] as Raw) : {},
+      );
+      f.setId = rowSetId ?? bucketSetId;
+      finals.push(f);
+    }
+  }
+  return finals;
 }
 
 /**
@@ -337,6 +457,12 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
 
   const selectionLocked = bool(share?.selectionLocked);
 
+  const maxClientSelections =
+    maxClientSelectionsFromRaw(share) ??
+    maxClientSelectionsFromRaw(folder) ??
+    maxClientSelectionsFromRaw(root) ??
+    null;
+
   /** True once the client has submitted at least once (timestamp or explicit flags). Never implies read-only; editing follows {@link canEditSelections}. */
   const selectionSubmitted =
     (share != null && str(share.selectionSubmittedAt).length > 0) ||
@@ -357,21 +483,34 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
         ? folder.canEditSelections
         : !selectionLocked;
 
-  const assets: ShareGalleryAsset[] = [];
-  for (let i = 0; i < assetsRaw.length; i++) {
-    const a = assetFromRow(assetsRaw[i], i);
-    if (!a) continue;
-    if (selectedIds.has(a.id)) {
-      a.selection = "SELECTED";
+  const uploadsBySet =
+    folder?.uploadsBySet ?? folder?.uploads_by_set ?? root.uploadsBySet ?? root.uploads_by_set;
+  const finalsBySet =
+    folder?.finalsBySet ?? folder?.finals_by_set ?? root.finalsBySet ?? root.finals_by_set;
+
+  let assets: ShareGalleryAsset[] = assetsFromUploadsBySet(uploadsBySet, selectedIds);
+  if (assets.length === 0) {
+    assets = [];
+    for (let i = 0; i < assetsRaw.length; i++) {
+      const a = assetFromRow(assetsRaw[i], i);
+      if (!a) continue;
+      if (selectedIds.has(a.id)) {
+        a.selection = "SELECTED";
+      }
+      assets.push(a);
     }
-    assets.push(a);
   }
 
-  const finals: ShareGalleryFinal[] = [];
-  for (let i = 0; i < finalsRaw.length; i++) {
-    const f = finalFromRow(finalsRaw[i], i);
-    if (f) finals.push(f);
+  let finals: ShareGalleryFinal[] = finalsFromFinalsBySet(finalsBySet);
+  if (finals.length === 0) {
+    finals = [];
+    for (let i = 0; i < finalsRaw.length; i++) {
+      const f = finalFromRow(finalsRaw[i], i);
+      if (f) finals.push(f);
+    }
   }
+
+  const sets = normalizeShareSets(folder, root);
 
   const folderId =
     str(folder?._id) ||
@@ -500,12 +639,14 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     selectionSubmitted,
     canEditSelections,
     selectionLocked,
+    maxClientSelections,
     finalDelivery,
     rightsProtection,
     backgroundMusicUrl,
     backgroundMusicEnabled,
     assets,
     finals,
+    sets,
     counts,
   };
 }

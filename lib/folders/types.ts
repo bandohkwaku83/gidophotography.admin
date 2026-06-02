@@ -13,6 +13,8 @@ export type ApiFolderShare = {
   linkExpiryPreset?: string | null;
   selectionSubmittedAt?: string | null;
   selectionLocked?: boolean;
+  /** Max photos the client may select; null/omitted = unlimited. */
+  maxClientSelections?: number | null;
   /** When true, client share treats finals as payment-locked until unlock (some backends nest here). */
   finalsLocked?: boolean;
 };
@@ -21,9 +23,30 @@ export type ApiFolderShare = {
  * Raw / selection / final media row from folder detail API (shape may vary).
  * See `docs/backend-api-watermark-and-media.md`: `url` vs `displayUrl`, nested `selection[].raw`.
  */
+export type ApiFolderSet = {
+  _id: string;
+  name: string;
+  sortOrder?: number;
+  mediaCount?: number;
+  rawCount?: number;
+  selectionCount?: number;
+  finalCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/** Grouped media bucket from folder/share detail (`uploadsBySet`, etc.). */
+export type ApiFolderMediaBySetBucket = {
+  setId?: string | null;
+  setName?: string;
+  media?: ApiFolderMedia[];
+};
+
 export type ApiFolderMedia = {
   _id?: string;
   id?: string;
+  /** Sub-gallery set id for raw uploads; null/omitted = General (uncategorized). */
+  setId?: string | null;
   filename?: string;
   originalName?: string;
   /** Common on GET folder `uploads` / upload responses */
@@ -84,12 +107,25 @@ export type ApiFolder = {
   status?: string;
   /** Some responses nest this under `share` only; see {@link ApiFolderShare.selectionLocked}. */
   selectionLocked?: boolean;
+  /** Max photos the client may select on the share gallery; null/omitted = unlimited. */
+  maxClientSelections?: number | null;
+  /** Named sub-galleries within this folder (e.g. “At the park”, “Exclusives”). */
+  sets?: ApiFolderSet[];
+  /** Raw uploads not assigned to a set. */
+  generalMediaCount?: number;
+  totalRawMediaCount?: number;
   /** Raw uploads (detail GET). */
   uploads?: ApiFolderMedia[];
+  /** Raw uploads grouped by set (detail GET / share GET). */
+  uploadsBySet?: ApiFolderMediaBySetBucket[];
   /** Client selection rows (detail GET). */
   selection?: ApiFolderMedia[];
+  /** Client selections grouped by set. */
+  selectionBySet?: ApiFolderMediaBySetBucket[];
   /** Delivered finals (detail GET). */
   finals?: ApiFolderMedia[];
+  /** Finals grouped by set. */
+  finalsBySet?: ApiFolderMediaBySetBucket[];
   rawMedia?: ApiFolderMedia[];
   selectionMedia?: ApiFolderMedia[];
   finalMedia?: ApiFolderMedia[];

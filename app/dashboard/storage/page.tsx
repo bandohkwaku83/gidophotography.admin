@@ -1,5 +1,6 @@
 "use client";
 
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -192,7 +193,7 @@ export default function StoragePage() {
   const showEmptyList = !listLoading && sortedRows.length === 0 && !listError;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <DashboardPage className="space-y-8">
       <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
         {summaryError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
@@ -466,6 +467,6 @@ export default function StoragePage() {
           </>
         )}
       </section>
-    </div>
+    </DashboardPage>
   );
 }

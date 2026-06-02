@@ -1,5 +1,6 @@
 "use client";
 
+import { DashboardPage } from "@/components/photographer/dashboard-page";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -363,7 +364,7 @@ export default function GalleriesTrashPage() {
   const fullyEmpty = data && !hasFolderTrash && !hasMediaTrash;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <DashboardPage className="space-y-8">
       <div className="flex flex-wrap items-center gap-4">
         <Link
           href="/dashboard/galleries"
@@ -794,6 +795,6 @@ export default function GalleriesTrashPage() {
           </div>
         </section>
       ) : null}
-    </div>
+    </DashboardPage>
   );
 }
