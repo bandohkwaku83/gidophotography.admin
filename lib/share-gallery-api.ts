@@ -398,8 +398,10 @@ function mergeSelectionAssetsIntoUploads(
       id: rawMediaId,
     };
     const setId =
-      parseSetIdFromApiRow(o) ?? parseSetIdFromApiRow(nestedRaw) ?? merged.setId ?? null;
-    if (setId !== undefined) merged.setId = setId;
+      parseSetIdFromApiRow(o) ??
+      parseSetIdFromApiRow(nestedRaw) ??
+      parseSetIdFromApiRow(merged);
+    merged.setId = setId;
 
     const asset = assetFromRow(merged, byId.size);
     if (!asset) continue;

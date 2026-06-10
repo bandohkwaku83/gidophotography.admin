@@ -33,6 +33,11 @@ function fallbackOgPng(title: string): Response {
   );
 }
 
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+/** `object-cover` + `object-position` crop, then resize to the OG canvas. */
 async function jpegFromRemoteCover(
   imageUrl: string,
   focal?: { x: number; y: number },
@@ -42,16 +47,32 @@ async function jpegFromRemoteCover(
   if (!res.ok) return null;
   const buf = Buffer.from(await res.arrayBuffer());
   try {
-    const position =
-      focal != null
-        ? { left: Math.min(1, Math.max(0, focal.x / 100)), top: Math.min(1, Math.max(0, focal.y / 100)) }
-        : sharp.strategy.attention;
-    return await sharp(buf)
-      .rotate()
-      .resize(OG_WIDTH, OG_HEIGHT, {
-        fit: "cover",
-        position,
-      })
+    const rotated = sharp(buf).rotate();
+    const meta = await rotated.metadata();
+    const width = meta.width;
+    const height = meta.height;
+    if (!width || !height) return null;
+
+    const targetAspect = OG_WIDTH / OG_HEIGHT;
+    const srcAspect = width / height;
+    let cropW: number;
+    let cropH: number;
+    if (srcAspect > targetAspect) {
+      cropH = height;
+      cropW = Math.round(height * targetAspect);
+    } else {
+      cropW = width;
+      cropH = Math.round(width / targetAspect);
+    }
+
+    const fx = clamp(focal?.x ?? 50, 0, 100);
+    const fy = clamp(focal?.y ?? 50, 0, 100);
+    const left = clamp(Math.round((fx / 100) * (width - cropW)), 0, width - cropW);
+    const top = clamp(Math.round((fy / 100) * (height - cropH)), 0, height - cropH);
+
+    return await rotated
+      .extract({ left, top, width: cropW, height: cropH })
+      .resize(OG_WIDTH, OG_HEIGHT)
       .jpeg({ quality: 84, mozjpeg: true })
       .toBuffer();
   } catch {
