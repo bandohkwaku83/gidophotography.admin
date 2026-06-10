@@ -272,12 +272,39 @@ export function ClientGalleryApp({ token }: { token: string }) {
     }
   }, [musicAllowed, galleryMusicStarted, galleryMusicMuted]);
 
+  /** Pause when the tab is hidden or the page is left; resume when the tab is active again. */
   useEffect(() => {
-    const a = audioRef.current;
+    if (!musicAllowed) return;
+
+    function onVisibilityChange() {
+      const a = audioRef.current;
+      if (!a) return;
+
+      if (document.hidden) {
+        a.pause();
+        return;
+      }
+
+      if (galleryMusicStarted && !galleryMusicMuted) {
+        void a.play().catch(() => {});
+      }
+    }
+
+    function onPageHide() {
+      const a = audioRef.current;
+      if (!a) return;
+      a.pause();
+      a.currentTime = 0;
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      a?.pause();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
+      onPageHide();
     };
-  }, []);
+  }, [musicAllowed, galleryMusicStarted, galleryMusicMuted]);
 
   useEffect(() => {
     if (gallery?.finalDelivery === false && photoTab === "edited") {
@@ -386,12 +413,14 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const selectionAtLimit =
     maxClientSelections != null && selectedCount >= maxClientSelections;
   const editedCount = gallery?.finals.length ?? 0;
-  const uploadsCount = gallery?.counts?.uploads ?? assets.length;
+  const uploadsCount =
+    gallery?.counts?.uploads ??
+    assets.filter((a) => !a.rawHiddenFromUploads).length;
 
   const tabAssets = useMemo(() => {
     if (photoTab === "selected") return assets.filter((a) => a.selection === "SELECTED");
     if (photoTab === "edited") return [];
-    return assets;
+    return assets.filter((a) => !a.rawHiddenFromUploads);
   }, [assets, photoTab]);
 
   const visibleAssets = useMemo(() => {

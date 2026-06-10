@@ -63,7 +63,7 @@ export async function publicSiteOrigin(): Promise<string> {
 /**
  * Open Graph / Twitter metadata for a client gallery. Canonical `/g/:token` stays on **this host**
  * (`admin.*` URLs keep `admin.*` in `og:url`). Actual preview **`og:image`** is served by
- * `opengraph-image.tsx` (JPEG, ~1200×630, compact) — raw S3 covers are often multi‑MiB and
+ * `opengraph-image.tsx` (JPEG, ~1200×1600 portrait, compact) — raw S3 covers are often multi‑MiB and
  * mobile link previews time out → fall back to the site logo.
  */
 export async function buildClientGalleryLinkMetadata(rawToken: string): Promise<Metadata> {

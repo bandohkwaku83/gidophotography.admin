@@ -76,6 +76,8 @@ export type ApiFolderMedia = {
   /** On selection rows: nested raw file (GET folder detail). */
   raw?: ApiFolderMedia;
   rawMediaId?: string;
+  /** Selection row: raw soft-deleted from uploads list but file URLs still available on `raw`. */
+  rawHiddenFromUploads?: boolean;
 };
 
 export type ApiFolder = {

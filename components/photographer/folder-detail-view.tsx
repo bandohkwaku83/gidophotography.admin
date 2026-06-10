@@ -416,12 +416,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       }));
     }
     if (tab === "selection") {
-      return filteredClientSelectedAssets.map((a) => ({
-        id: a.id,
-        name: a.originalName,
-        src: a.previewUrl ?? a.thumbUrl,
-        isVideo: isDemoAssetVideo(a),
-      }));
+      return filteredClientSelectedAssets
+        .filter((a) => !a.rawMissing && Boolean(a.previewUrl ?? a.thumbUrl))
+        .map((a) => ({
+          id: a.id,
+          name: a.originalName,
+          src: a.previewUrl ?? a.thumbUrl,
+          isVideo: isDemoAssetVideo(a),
+        }));
     }
     return filteredFinalAssets.map((f) => ({
       id: f.id,
@@ -2357,26 +2359,45 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     className="overflow-hidden rounded-xl border border-rose-200/70 bg-white shadow-sm ring-1 ring-rose-100/60 dark:border-rose-900/50 dark:bg-zinc-950 dark:ring-rose-950/40"
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
-                      <button
-                        type="button"
-                        className="absolute inset-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
-                        onClick={() => {
-                          setLightboxId(a.id);
-                          setLightboxZoom(1);
-                        }}
-                        aria-label={`Preview ${a.originalName}`}
-                      >
-                        <AdminMediaPreview
-                          src={a.previewUrl ?? a.thumbUrl}
-                          name={a.originalName}
-                          isVideo={isDemoAssetVideo(a)}
-                        />
-                        {isDemoAssetVideo(a) ? (
-                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
-                            <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
-                          </span>
-                        ) : null}
-                      </button>
+                      {a.rawMissing ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+                          <ImageIcon
+                            className="h-8 w-8 text-zinc-400 dark:text-zinc-500"
+                            aria-hidden
+                          />
+                          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                            Preview unavailable
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          {a.rawHiddenFromUploads ? (
+                            <span className="absolute left-2 top-2 z-10 max-w-[calc(100%-1rem)] rounded-md bg-amber-100/95 px-2 py-1 text-[10px] font-semibold leading-tight text-amber-950 shadow-sm ring-1 ring-amber-200/80 dark:bg-amber-950/90 dark:text-amber-100 dark:ring-amber-800/60">
+                              Removed from gallery uploads
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="absolute inset-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
+                            onClick={() => {
+                              setLightboxId(a.id);
+                              setLightboxZoom(1);
+                            }}
+                            aria-label={`Preview ${a.originalName}`}
+                          >
+                            <AdminMediaPreview
+                              src={a.previewUrl ?? a.thumbUrl}
+                              name={a.originalName}
+                              isVideo={isDemoAssetVideo(a)}
+                            />
+                            {isDemoAssetVideo(a) ? (
+                              <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                                <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
+                              </span>
+                            ) : null}
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div className="space-y-2 border-t border-zinc-100 p-3 text-xs dark:border-zinc-800">
                       <p className="font-semibold leading-tight text-zinc-800 dark:text-zinc-100">

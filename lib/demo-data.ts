@@ -19,6 +19,10 @@ export type DemoAsset = {
   setId?: string | null;
   /** Source raw upload id when this row is a client selection. */
   rawMediaId?: string;
+  /** Selection row with no resolvable preview (legacy / edge case). */
+  rawMissing?: boolean;
+  /** Raw soft-deleted from uploads; selection still shows embedded URLs. */
+  rawHiddenFromUploads?: boolean;
 };
 
 export type DemoFinalAsset = {

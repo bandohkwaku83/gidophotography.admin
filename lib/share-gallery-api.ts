@@ -24,6 +24,8 @@ export type ShareGalleryAsset = {
   selection: "SELECTED" | "UNSELECTED";
   /** Sub-gallery set id; null/omitted = General. */
   setId?: string | null;
+  /** Present on client picks whose raw was soft-deleted from uploads (still viewable). */
+  rawHiddenFromUploads?: boolean;
 };
 
 export type ShareGalleryFinal = {
@@ -336,6 +338,81 @@ function assetsFromUploadsBySet(
   return assets;
 }
 
+function readRawHiddenFromUploads(o: Raw): boolean {
+  return o.rawHiddenFromUploads === true || o.raw_hidden_from_uploads === true;
+}
+
+function selectionRowsFromFolder(folder: Raw | null, root: Raw): unknown[] {
+  const bySet =
+    folder?.selectionBySet ??
+    folder?.selection_by_set ??
+    root.selectionBySet ??
+    root.selection_by_set;
+  if (Array.isArray(bySet) && bySet.length > 0) {
+    const out: unknown[] = [];
+    for (const bucket of bySet) {
+      if (!bucket || typeof bucket !== "object") continue;
+      const b = bucket as Raw;
+      const media = b.media ?? b.selection ?? b.items ?? b.files;
+      if (Array.isArray(media)) out.push(...media);
+    }
+    if (out.length > 0) return out;
+  }
+  if (folder && Array.isArray(folder.selection)) return folder.selection as unknown[];
+  return [];
+}
+
+/**
+ * Keep client selections visible when their raw was soft-deleted from uploads.
+ * Hidden rows are omitted from the All tab via {@link ShareGalleryAsset.rawHiddenFromUploads}.
+ */
+function mergeSelectionAssetsIntoUploads(
+  assets: ShareGalleryAsset[],
+  selectionRows: unknown[],
+): ShareGalleryAsset[] {
+  if (selectionRows.length === 0) return assets;
+  const byId = new Map(assets.map((a) => [a.id, a]));
+
+  for (let i = 0; i < selectionRows.length; i++) {
+    const row = selectionRows[i];
+    if (!row || typeof row !== "object") continue;
+    const o = row as Raw;
+    const nestedRaw = o.raw && typeof o.raw === "object" ? (o.raw as Raw) : null;
+    const rawMediaId =
+      str(o.rawMediaId) ||
+      (nestedRaw ? str(nestedRaw._id) || str(nestedRaw.id) : "");
+    if (!rawMediaId) continue;
+
+    const hidden = readRawHiddenFromUploads(o);
+    const existing = byId.get(rawMediaId);
+    if (existing) {
+      existing.selection = "SELECTED";
+      if (hidden) existing.rawHiddenFromUploads = true;
+      continue;
+    }
+
+    if (!nestedRaw) continue;
+    const merged: Raw = {
+      ...nestedRaw,
+      _id: rawMediaId,
+      id: rawMediaId,
+    };
+    const setId =
+      parseSetIdFromApiRow(o) ?? parseSetIdFromApiRow(nestedRaw) ?? merged.setId ?? null;
+    if (setId !== undefined) merged.setId = setId;
+
+    const asset = assetFromRow(merged, byId.size);
+    if (!asset) continue;
+    asset.id = rawMediaId;
+    asset.selection = "SELECTED";
+    asset.rawHiddenFromUploads = true;
+    asset.setId = setId;
+    byId.set(rawMediaId, asset);
+  }
+
+  return [...byId.values()];
+}
+
 function finalsFromFinalsBySet(buckets: unknown): ShareGalleryFinal[] {
   if (!Array.isArray(buckets) || buckets.length === 0) return [];
   const finals: ShareGalleryFinal[] = [];
@@ -500,6 +577,8 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
       assets.push(a);
     }
   }
+
+  assets = mergeSelectionAssetsIntoUploads(assets, selectionRowsFromFolder(folder, root));
 
   let finals: ShareGalleryFinal[] = finalsFromFinalsBySet(finalsBySet);
   if (finals.length === 0) {

@@ -3,8 +3,9 @@ import sharp from "sharp";
 import { decodeGalleryToken, publicSiteOrigin } from "@/lib/client-gallery-link-metadata";
 import { getShareGallery, ShareGalleryError } from "@/lib/share-gallery-api";
 
+/** Portrait 3:4 — matches how gallery covers read on mobile link previews. */
 export const OG_WIDTH = 1200;
-export const OG_HEIGHT = 630;
+export const OG_HEIGHT = 1600;
 
 function fallbackOgPng(title: string): Response {
   return new ImageResponse(
@@ -32,17 +33,24 @@ function fallbackOgPng(title: string): Response {
   );
 }
 
-async function jpegFromRemoteCover(imageUrl: string): Promise<Buffer | null> {
+async function jpegFromRemoteCover(
+  imageUrl: string,
+  focal?: { x: number; y: number },
+): Promise<Buffer | null> {
   const ctl = AbortSignal.timeout(12_000);
   const res = await fetch(imageUrl, { signal: ctl, cache: "no-store" });
   if (!res.ok) return null;
   const buf = Buffer.from(await res.arrayBuffer());
   try {
+    const position =
+      focal != null
+        ? { left: Math.min(1, Math.max(0, focal.x / 100)), top: Math.min(1, Math.max(0, focal.y / 100)) }
+        : sharp.strategy.attention;
     return await sharp(buf)
       .rotate()
       .resize(OG_WIDTH, OG_HEIGHT, {
         fit: "cover",
-        position: sharp.strategy.attention,
+        position,
       })
       .jpeg({ quality: 84, mozjpeg: true })
       .toBuffer();
@@ -52,7 +60,7 @@ async function jpegFromRemoteCover(imageUrl: string): Promise<Buffer | null> {
 }
 
 /**
- * ~1200×630 JPEG thumbnail for WhatsApp/iMessage/facebook crawlers — raw covers are often huge and
+ * ~1200×1600 portrait JPEG for WhatsApp/iMessage/facebook crawlers — raw covers are often huge and
  * time out peer fetches → apps fall back to the web logo (`icon.png`).
  */
 export async function galleryOpenGraphImageResponse(rawToken: string): Promise<Response> {
@@ -60,6 +68,7 @@ export async function galleryOpenGraphImageResponse(rawToken: string): Promise<R
 
   let coverUrl = "";
   let title = "Client gallery";
+  let focal: { x: number; y: number } | undefined;
 
   if (token) {
     try {
@@ -67,6 +76,12 @@ export async function galleryOpenGraphImageResponse(rawToken: string): Promise<R
       const gallery = await getShareGallery(token, undefined, { baseOrigin: origin });
       title = gallery.eventName?.trim() || title;
       coverUrl = gallery.coverImageUrl?.trim() ?? "";
+      if (gallery.coverFocalX != null || gallery.coverFocalY != null) {
+        focal = {
+          x: gallery.coverFocalX ?? 50,
+          y: gallery.coverFocalY ?? 50,
+        };
+      }
     } catch (e) {
       if (!(e instanceof ShareGalleryError)) {
         console.warn("[gallery-opengraph-image] gallery load failed", e);
@@ -76,7 +91,7 @@ export async function galleryOpenGraphImageResponse(rawToken: string): Promise<R
 
   if (!coverUrl) return fallbackOgPng(title);
 
-  const jpeg = await jpegFromRemoteCover(coverUrl);
+  const jpeg = await jpegFromRemoteCover(coverUrl, focal);
   if (!jpeg) return fallbackOgPng(title);
 
   const out = jpeg;

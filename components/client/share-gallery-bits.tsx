@@ -285,6 +285,7 @@ export function toDemoAssets(shareAssets: ShareGalleryAsset[]): DemoAsset[] {
     ...(a.previewUrl ? { previewUrl: a.previewUrl } : {}),
     ...(a.mimeType ? { mimeType: a.mimeType } : {}),
     setId: a.setId ?? null,
+    ...(a.rawHiddenFromUploads ? { rawHiddenFromUploads: true } : {}),
   }));
 }
 

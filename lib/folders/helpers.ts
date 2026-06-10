@@ -137,17 +137,21 @@ export function extractRawMediaList(folder: ApiFolder): ApiFolderMedia[] {
 function normalizeSelectionListItem(item: unknown): ApiFolderMedia | null {
   if (!item || typeof item !== "object") return null;
   const row = item as Record<string, unknown>;
+  const selectionId =
+    (typeof row._id === "string" && row._id) ||
+    (typeof row.id === "string" && row.id) ||
+    "";
   const nestedRaw = row.raw;
   if (nestedRaw && typeof nestedRaw === "object") {
     const r = nestedRaw as Record<string, unknown>;
-    const selectionId =
-      (typeof row._id === "string" && row._id) ||
-      (typeof row.id === "string" && row.id) ||
-      "";
     if (selectionId) {
       return {
         _id: selectionId,
         url: typeof r.url === "string" ? r.url : undefined,
+        thumbUrl: typeof r.thumbUrl === "string" ? r.thumbUrl : undefined,
+        thumbnailUrl: typeof r.thumbnailUrl === "string" ? r.thumbnailUrl : undefined,
+        displayUrl: typeof r.displayUrl === "string" ? r.displayUrl : undefined,
+        previewUrl: typeof r.previewUrl === "string" ? r.previewUrl : undefined,
         originalFilename:
           typeof r.originalFilename === "string" ? r.originalFilename : undefined,
         originalName: typeof r.originalName === "string" ? r.originalName : undefined,
@@ -165,11 +169,44 @@ function normalizeSelectionListItem(item: unknown): ApiFolderMedia | null {
           parseSetIdFromApiRow(row) ??
           parseSetIdFromApiRow(r) ??
           undefined,
+        rawHiddenFromUploads: readRawHiddenFromUploads(row),
         selected: true,
         selection: "SELECTED",
         isSelected: true,
       };
     }
+  }
+  if (selectionId) {
+    const rawMediaId =
+      typeof row.rawMediaId === "string" && row.rawMediaId.trim()
+        ? row.rawMediaId.trim()
+        : undefined;
+    const fallbackName =
+      typeof row.originalName === "string"
+        ? row.originalName
+        : typeof row.originalFilename === "string"
+          ? row.originalFilename
+          : typeof row.name === "string"
+            ? row.name
+            : undefined;
+    return {
+      _id: selectionId,
+      rawMediaId,
+      editStatus: typeof row.editStatus === "string" ? row.editStatus : undefined,
+      clientComment:
+        typeof row.clientComment === "string"
+          ? row.clientComment
+          : typeof row.comment === "string"
+            ? row.comment
+            : undefined,
+      setId: parseSetIdFromApiRow(row) ?? undefined,
+      rawHiddenFromUploads: readRawHiddenFromUploads(row),
+      originalName:
+        rawMediaId && !fallbackName ? "File removed from gallery" : fallbackName ?? "Selection",
+      selected: true,
+      selection: "SELECTED",
+      isSelected: true,
+    };
   }
   return item as ApiFolderMedia;
 }
@@ -282,6 +319,10 @@ function apiEditStatusToUi(s?: string): "NONE" | "IN_PROGRESS" | "EDITED" {
   return "NONE";
 }
 
+function readRawHiddenFromUploads(o: Record<string, unknown>): boolean {
+  return o.rawHiddenFromUploads === true || o.raw_hidden_from_uploads === true;
+}
+
 function apiMediaMimeType(m: ApiFolderMedia): string {
   const o = m as Record<string, unknown>;
   for (const key of ["mimeType", "mime_type", "contentType", "content_type", "mimetype", "mime"]) {
@@ -318,10 +359,12 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
       : typeof o.rawMediaId === "string"
         ? o.rawMediaId
         : undefined;
+  const rawHiddenFromUploads = readRawHiddenFromUploads(o);
+  const rawMissing = Boolean(rawMediaId && !thumbUrl && !rawHiddenFromUploads);
 
   return {
     id,
-    originalName,
+    originalName: rawMissing ? "File removed from gallery" : originalName,
     selection: selected ? "SELECTED" : "UNSELECTED",
     editState: apiEditStatusToUi(m.editStatus),
     clientComment: m.clientComment || m.comment || "",
@@ -330,6 +373,8 @@ export function apiFolderMediaToDemoAsset(m: ApiFolderMedia): DemoAsset {
     ...(mimeType ? { mimeType } : {}),
     setId,
     ...(rawMediaId ? { rawMediaId } : {}),
+    ...(rawMissing ? { rawMissing: true } : {}),
+    ...(rawHiddenFromUploads ? { rawHiddenFromUploads: true } : {}),
   };
 }
 
