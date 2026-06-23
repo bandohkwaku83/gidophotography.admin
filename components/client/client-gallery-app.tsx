@@ -40,6 +40,7 @@ import {
   type GridLayout,
 } from "@/components/client/share-gallery-bits";
 import { ShareGalleryMasonryList, useMasonryColumnCount } from "@/components/client/share-gallery-masonry";
+import { GalleryLightbox } from "@/components/gallery-lightbox";
 import { useToast } from "@/components/toast-provider";
 import { ClientGalleryPageSkeleton } from "@/components/ui/skeletons";
 import type { DemoAsset, SelectionState } from "@/lib/demo-data";
@@ -1649,338 +1650,222 @@ export function ClientGalleryApp({ token }: { token: string }) {
       </footer>
 
       {lightboxId && lbAsset ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            aria-label="Close"
-            onClick={() => closeAllPreviews()}
-          />
-          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.min(2.5, z + 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom +
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom −
-              </button>
-              <button
-                type="button"
-                onClick={() => closeAllPreviews()}
-                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto">
-              {isDemoAssetVideo(lbAsset) ? (
-                <video
-                  src={lbAsset.previewUrl ?? lbAsset.thumbUrl}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  aria-label={lbAsset.originalName}
-                  className={cn(
-                    "max-h-[75vh] max-w-full bg-black object-contain transition-transform duration-200",
-                    gallery.rightsProtection && "select-none",
-                  )}
-                  style={{ transform: `scale(${zoom})` }}
-                  onContextMenu={(e) => {
-                    if (gallery.rightsProtection) e.preventDefault();
-                  }}
-                />
-              ) : (
-                <Image
-                  src={lbAsset.previewUrl ?? lbAsset.thumbUrl}
-                  alt={lbAsset.originalName}
-                  width={1920}
-                  height={1920}
-                  sizes={SHARE_LIGHTBOX_SIZES}
-                  quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
-                  className={cn(
-                    "h-auto max-h-[75vh] w-auto max-w-full object-contain transition-transform duration-200",
-                    gallery.rightsProtection && "select-none",
-                  )}
-                  style={{ transform: `scale(${zoom})` }}
-                  onContextMenu={(e) => {
-                    if (gallery.rightsProtection) e.preventDefault();
-                  }}
-                />
+        <GalleryLightbox
+          onClose={() => closeAllPreviews()}
+          zoom={zoom}
+          onZoomChange={setZoom}
+          counter={`${lbNavIndex + 1} / ${lightboxNavAssets.length}`}
+          title={lbAsset.originalName}
+          hasPrev={lbNavIndex > 0}
+          hasNext={lbNavIndex >= 0 && lbNavIndex < lightboxNavAssets.length - 1}
+          onPrev={() => {
+            const prev = lightboxNavAssets[lbNavIndex - 1];
+            if (prev) {
+              setLightboxId(prev.id);
+              setZoom(1);
+            }
+          }}
+          onNext={() => {
+            const next = lightboxNavAssets[lbNavIndex + 1];
+            if (next) {
+              setLightboxId(next.id);
+              setZoom(1);
+            }
+          }}
+          zoomable={!isDemoAssetVideo(lbAsset)}
+          footer={
+            <button
+              type="button"
+              disabled={editingLocked || syncBusy}
+              onClick={() => void toggleSelect(lbAsset.id)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold shadow-lg backdrop-blur-md transition",
+                lbAsset.selection === "SELECTED"
+                  ? "bg-rose-500 text-white hover:bg-rose-600"
+                  : "border border-white/25 bg-black/45 text-white hover:bg-white/10",
               )}
-            </div>
-            <div className="flex items-center justify-between gap-4 text-white">
-              <button
-                type="button"
-                disabled={lbNavIndex <= 0}
-                onClick={() => {
-                  const prev = lightboxNavAssets[lbNavIndex - 1];
-                  if (prev) {
-                    setLightboxId(prev.id);
-                    setZoom(1);
-                  }
-                }}
-                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                ← Previous
-              </button>
-              <button
-                type="button"
-                disabled={editingLocked || syncBusy}
-                onClick={() => void toggleSelect(lbAsset.id)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                  lbAsset.selection === "SELECTED"
-                    ? "bg-rose-500 text-white"
-                    : "border border-white/40 text-white"
-                }`}
-              >
-                {lbAsset.selection === "SELECTED" ? "Selected" : "Select"}
-              </button>
-              <button
-                type="button"
-                disabled={lbNavIndex < 0 || lbNavIndex >= lightboxNavAssets.length - 1}
-                onClick={() => {
-                  const next = lightboxNavAssets[lbNavIndex + 1];
-                  if (next) {
-                    setLightboxId(next.id);
-                    setZoom(1);
-                  }
-                }}
-                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        </div>
+            >
+              <Heart
+                className={cn(
+                  "h-4 w-4",
+                  lbAsset.selection === "SELECTED" && "fill-current",
+                )}
+                aria-hidden
+              />
+              {lbAsset.selection === "SELECTED" ? "Selected" : "Select photo"}
+            </button>
+          }
+        >
+          {isDemoAssetVideo(lbAsset) ? (
+            <video
+              src={lbAsset.previewUrl ?? lbAsset.thumbUrl}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label={lbAsset.originalName}
+              className={cn(
+                "max-h-[calc(92vh-8rem)] max-w-full bg-black object-contain",
+                gallery.rightsProtection && "select-none",
+              )}
+              onContextMenu={(e) => {
+                if (gallery.rightsProtection) e.preventDefault();
+              }}
+            />
+          ) : (
+            <Image
+              src={lbAsset.previewUrl ?? lbAsset.thumbUrl}
+              alt={lbAsset.originalName}
+              width={1920}
+              height={1920}
+              sizes={SHARE_LIGHTBOX_SIZES}
+              quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
+              className={cn(
+                "h-auto max-h-[calc(92vh-8rem)] w-auto max-w-full object-contain",
+                gallery.rightsProtection && "select-none",
+              )}
+              onContextMenu={(e) => {
+                if (gallery.rightsProtection) e.preventDefault();
+              }}
+            />
+          )}
+        </GalleryLightbox>
       ) : null}
 
       {finalLb ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Preview — ${finalLb.name}`}
-        >
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            aria-label="Close"
-            onClick={() => closeAllPreviews()}
-          />
-          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.min(2.5, z + 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom +
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom −
-              </button>
-              <button
-                type="button"
-                onClick={() => closeAllPreviews()}
-                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto">
-              {!finalLb.locked && isShareFinalVideo(finalLb) ? (
-                <video
-                  src={finalLb.url}
-                  {...(finalLb.lockedPreviewUrl ? { poster: finalLb.lockedPreviewUrl } : {})}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  aria-label={finalLb.name}
-                  className={cn(
-                    "max-h-[75vh] max-w-full object-contain transition-transform duration-200",
-                    gallery.rightsProtection && "select-none",
+        <GalleryLightbox
+          onClose={() => closeAllPreviews()}
+          zoom={zoom}
+          onZoomChange={setZoom}
+          ariaLabel={`Preview — ${finalLb.name}`}
+          counter={`${finalLbIndex + 1} / ${visibleFinals.length}`}
+          title={finalLb.name}
+          hasPrev={finalLbIndex > 0}
+          hasNext={finalLbIndex >= 0 && finalLbIndex < visibleFinals.length - 1}
+          onPrev={() => {
+            const prev = visibleFinals[finalLbIndex - 1];
+            if (prev) {
+              setFinalLightboxId(prev.id);
+              setZoom(1);
+            }
+          }}
+          onNext={() => {
+            const next = visibleFinals[finalLbIndex + 1];
+            if (next) {
+              setFinalLightboxId(next.id);
+              setZoom(1);
+            }
+          }}
+          zoomable={finalLb.locked || !isShareFinalVideo(finalLb)}
+          footer={
+            <div className="flex flex-col items-center gap-2 rounded-2xl border border-white/20 bg-black/45 px-4 py-3 text-center text-white backdrop-blur-md">
+              {finalLb.locked ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-200">
+                  <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Preview only until paid
+                </span>
+              ) : preferInlineFinalSave ? (
+                <button
+                  type="button"
+                  title={touchMobileFinalSaveUx?.saveButtonTitle}
+                  aria-label={
+                    touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo to your device"
+                  }
+                  disabled={finalSaveBusyId !== null}
+                  aria-busy={finalSaveBusyId === finalLb.id}
+                  onClick={() => void handleDeliverFinalPhotoMobile(finalLb)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 enabled:hover:bg-white/90 disabled:opacity-50"
+                >
+                  {finalSaveBusyId === finalLb.id ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                  ) : (
+                    <Share2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   )}
-                  style={{ transform: `scale(${zoom})` }}
-                  onContextMenu={(e) => {
-                    if (gallery.rightsProtection) e.preventDefault();
-                  }}
-                />
+                  Save / Share
+                </button>
               ) : (
-                <Image
-                  src={finalDisplaySrc(finalLb, token)}
-                  alt={finalLb.name}
-                  width={1920}
-                  height={1920}
-                  sizes={SHARE_LIGHTBOX_SIZES}
-                  quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
-                  className={cn(
-                    "h-auto max-h-[75vh] w-auto max-w-full object-contain transition-transform duration-200",
-                    gallery.rightsProtection && "select-none",
-                    finalLb.locked && "select-none",
-                  )}
-                  style={{ transform: `scale(${zoom})` }}
-                  draggable={!finalLb.locked}
-                  onContextMenu={(e) => {
-                    if (finalLb.locked || gallery.rightsProtection) e.preventDefault();
-                  }}
-                />
+                <a
+                  href={getShareFinalDownloadUrl(token, finalLb.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-white/90"
+                >
+                  <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Download
+                </a>
               )}
             </div>
-            <div className="flex flex-col gap-3 text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <button
-                type="button"
-                disabled={finalLbIndex <= 0}
-                onClick={() => {
-                  const prev = visibleFinals[finalLbIndex - 1];
-                  if (prev) {
-                    setFinalLightboxId(prev.id);
-                    setZoom(1);
-                  }
-                }}
-                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                ← Previous
-              </button>
-              <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-1 text-center">
-                <span className="max-w-full truncate text-xs font-medium">{finalLb.name}</span>
-                {finalLb.locked ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-200">
-                    <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    Preview only until paid
-                  </span>
-                ) : preferInlineFinalSave ? (
-                  <button
-                    type="button"
-                    title={touchMobileFinalSaveUx?.saveButtonTitle}
-                    aria-label={
-                      touchMobileFinalSaveUx?.saveButtonTitle ?? "Save or share photo to your device"
-                    }
-                    disabled={finalSaveBusyId !== null}
-                    aria-busy={finalSaveBusyId === finalLb.id}
-                    onClick={() => void handleDeliverFinalPhotoMobile(finalLb)}
-                    className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900 enabled:hover:bg-white/90 disabled:opacity-50"
-                  >
-                    {finalSaveBusyId === finalLb.id ? (
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                    ) : (
-                      <Share2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    )}
-                    Save / Share
-                  </button>
-                ) : (
-                  <a
-                    href={getShareFinalDownloadUrl(token, finalLb.id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-zinc-900"
-                  >
-                    <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    Download
-                  </a>
-                )}
-              </div>
-              <button
-                type="button"
-                disabled={finalLbIndex < 0 || finalLbIndex >= visibleFinals.length - 1}
-                onClick={() => {
-                  const next = visibleFinals[finalLbIndex + 1];
-                  if (next) {
-                    setFinalLightboxId(next.id);
-                    setZoom(1);
-                  }
-                }}
-                className="rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        </div>
+          }
+        >
+          {!finalLb.locked && isShareFinalVideo(finalLb) ? (
+            <video
+              src={finalLb.url}
+              {...(finalLb.lockedPreviewUrl ? { poster: finalLb.lockedPreviewUrl } : {})}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label={finalLb.name}
+              className={cn(
+                "max-h-[calc(92vh-8rem)] max-w-full object-contain",
+                gallery.rightsProtection && "select-none",
+              )}
+              onContextMenu={(e) => {
+                if (gallery.rightsProtection) e.preventDefault();
+              }}
+            />
+          ) : (
+            <Image
+              src={finalDisplaySrc(finalLb, token)}
+              alt={finalLb.name}
+              width={1920}
+              height={1920}
+              sizes={SHARE_LIGHTBOX_SIZES}
+              quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
+              className={cn(
+                "h-auto max-h-[calc(92vh-8rem)] w-auto max-w-full object-contain",
+                gallery.rightsProtection && "select-none",
+                finalLb.locked && "select-none",
+              )}
+              draggable={!finalLb.locked}
+              onContextMenu={(e) => {
+                if (finalLb.locked || gallery.rightsProtection) e.preventDefault();
+              }}
+            />
+          )}
+        </GalleryLightbox>
       ) : null}
 
       {coverLightboxOpen && gallery.coverImageUrl ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Cover preview"
+        <GalleryLightbox
+          onClose={() => closeAllPreviews()}
+          zoom={zoom}
+          onZoomChange={setZoom}
+          ariaLabel="Cover preview"
+          title={displayTitle ? `Cover — ${displayTitle}` : "Gallery cover"}
         >
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            aria-label="Close"
-            onClick={() => closeAllPreviews()}
+          <Image
+            src={gallery.coverImageUrl}
+            alt={displayTitle ? `Cover — ${displayTitle}` : "Gallery cover"}
+            width={1920}
+            height={1920}
+            sizes={SHARE_LIGHTBOX_SIZES}
+            quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
+            className={cn(
+              "h-auto max-h-[calc(92vh-8rem)] w-auto max-w-full object-contain object-center",
+              gallery.rightsProtection && "select-none",
+            )}
+            style={folderCoverObjectPositionStyle({
+              _id: gallery.folderId ?? "",
+              client: "",
+              eventDate: "",
+              description: "",
+              coverFocalX: gallery.coverFocalX,
+              coverFocalY: gallery.coverFocalY,
+            } as ApiFolder)}
+            onContextMenu={(e) => {
+              if (gallery.rightsProtection) e.preventDefault();
+            }}
           />
-          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.min(2.5, z + 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom +
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoom((z) => Math.max(1, z - 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom −
-              </button>
-              <button
-                type="button"
-                onClick={() => closeAllPreviews()}
-                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto">
-              <Image
-                src={gallery.coverImageUrl}
-                alt={displayTitle ? `Cover — ${displayTitle}` : "Gallery cover"}
-                width={1920}
-                height={1920}
-                sizes={SHARE_LIGHTBOX_SIZES}
-                quality={SHARE_LIGHTBOX_IMAGE_QUALITY}
-                className={cn(
-                  "h-auto max-h-[75vh] w-auto max-w-full object-contain object-center transition-transform duration-200",
-                  gallery.rightsProtection && "select-none",
-                )}
-                style={{
-                  transform: `scale(${zoom})`,
-                  ...folderCoverObjectPositionStyle({
-                    _id: gallery.folderId ?? "",
-                    client: "",
-                    eventDate: "",
-                    description: "",
-                    coverFocalX: gallery.coverFocalX,
-                    coverFocalY: gallery.coverFocalY,
-                  } as ApiFolder),
-                }}
-                onContextMenu={(e) => {
-                  if (gallery.rightsProtection) e.preventDefault();
-                }}
-              />
-            </div>
-          </div>
-        </div>
+        </GalleryLightbox>
       ) : null}
 
       {musicAllowed ? (

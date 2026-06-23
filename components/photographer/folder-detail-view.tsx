@@ -31,9 +31,13 @@ import {
   Unlock,
 } from "lucide-react";
 import { useToast } from "@/components/toast-provider";
+import { GalleryLightbox } from "@/components/gallery-lightbox";
 import { cn } from "@/lib/utils";
 import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
 import { UploadDragger } from "@/components/photographer/upload-dragger";
+import {
+  ReorderableMediaGrid,
+} from "@/components/photographer/reorderable-media-grid";
 import {
   isDemoAssetVideo,
   isDemoFinalAssetVideo,
@@ -55,6 +59,7 @@ import {
   apiFolderMediaToDemoAsset,
   apiFolderMediaToFinal,
   apiFolderStatusToUi,
+  applyFolderMediaReorderResponse,
   extractFinalMediaList,
   extractRawMediaList,
   extractSelectionMediaList,
@@ -81,6 +86,7 @@ import {
   deleteFolderRawMedia,
   postFolderMediaDuplicatePreview,
   regenerateFolderShare,
+  reorderFolderMedia,
   lockFolderFinalDelivery,
   unlockFolderFinalDelivery,
   updateFolderSet,
@@ -98,6 +104,7 @@ import {
   extractFolderSets,
   extractMaxClientSelections,
 } from "@/lib/folders-api";
+import { resolveFolderShareOrigin } from "@/lib/public-site-origin";
 import { getDuplicateUploadPreference } from "@/lib/upload-preferences";
 
 function rawUploadFormOptions(
@@ -137,13 +144,11 @@ function AdminMediaPreview({
   name,
   isVideo,
   variant = "tile",
-  zoom = 1,
 }: {
   src: string;
   name: string;
   isVideo: boolean;
   variant?: "tile" | "lightbox";
-  zoom?: number;
 }) {
   if (isVideo) {
     return (
@@ -157,9 +162,8 @@ function AdminMediaPreview({
         className={
           variant === "tile"
             ? "pointer-events-none h-full w-full bg-black object-cover"
-            : "max-h-[75vh] max-w-full bg-black object-contain transition-transform duration-200"
+            : "max-h-[calc(92vh-8rem)] max-w-full bg-black object-contain"
         }
-        style={variant === "lightbox" ? { transform: `scale(${zoom})` } : undefined}
       />
     );
   }
@@ -172,10 +176,9 @@ function AdminMediaPreview({
       className={
         variant === "tile"
           ? "pointer-events-none h-full w-full object-cover"
-          : "max-h-[75vh] max-w-full object-contain transition-transform duration-200"
+          : "max-h-[calc(92vh-8rem)] max-w-full object-contain"
       }
       loading={variant === "tile" ? "lazy" : undefined}
-      style={variant === "lightbox" ? { transform: `scale(${zoom})` } : undefined}
     />
   );
 }
@@ -208,6 +211,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [selectedFinalIds, setSelectedFinalIds] = useState<Set<string>>(() => new Set());
   const rawSelectAllRef = useRef<HTMLInputElement>(null);
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
+  const reorderDragRef = useRef(false);
+  const [reordering, setReordering] = useState(false);
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const coverFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -313,7 +318,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
 
   const shareUrl = useMemo(
     () =>
-      folder && origin ? getFolderShareAbsoluteUrl(folder, origin) ?? "" : "",
+      folder
+        ? getFolderShareAbsoluteUrl(folder, resolveFolderShareOrigin(folder, origin)) ?? ""
+        : "",
     [folder, origin],
   );
   const shareActive = Boolean(
@@ -361,6 +368,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (activeSetFilter === "general") return finalAssets.filter((f) => !f.setId);
     return finalAssets.filter((f) => f.setId === activeSetFilter);
   }, [finalAssets, activeSetFilter]);
+  /** Reorder applies to one set bucket; disabled while viewing all collections. */
+  const mediaReorderDisabled =
+    activeSetFilter === "all" || busy || mediaDeleteBlocked() || reordering;
+  const reorderSetId = useMemo((): string | null | undefined => {
+    if (activeSetFilter === "all") return undefined;
+    if (activeSetFilter === "general") return null;
+    return activeSetFilter;
+  }, [activeSetFilter]);
   const filteredClientSelectedAssets = useMemo(() => {
     if (activeSetFilter === "all") return clientSelectedAssets;
     if (activeSetFilter === "general") return clientSelectedAssets.filter((a) => !a.setId);
@@ -1407,6 +1422,36 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     }
   }
 
+  function openMediaPreview(id: string) {
+    if (reorderDragRef.current) {
+      reorderDragRef.current = false;
+      return;
+    }
+    setLightboxId(id);
+    setLightboxZoom(1);
+  }
+
+  async function onMediaReorder(kind: "raw" | "final", ordered: { id: string }[]) {
+    if (!folder || reorderSetId === undefined || reordering) return;
+    setReordering(true);
+    try {
+      const result = await reorderFolderMedia(folder._id, {
+        kind,
+        setId: reorderSetId,
+        orderedIds: ordered.map((item) => item.id),
+      });
+      setFolder((prev) => (prev ? applyFolderMediaReorderResponse(prev, result) : prev));
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError ? e.message : "Could not save order.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setReordering(false);
+    }
+  }
+
   async function onCreateSet() {
     if (!folder || creatingSet) return;
     const name = newSetName.trim();
@@ -2208,11 +2253,29 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 </p>
               </div>
             ) : (
-              <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {filteredRawAssets.map((a) => (
+              <ReorderableMediaGrid
+                items={filteredRawAssets}
+                disabled={mediaReorderDisabled}
+                dragGuardRef={reorderDragRef}
+                onOrderChange={(ordered) => void onMediaReorder("raw", ordered)}
+                className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+                renderOverlay={(a) => (
+                  <div className="relative aspect-square w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
+                    <AdminMediaPreview
+                      src={a.previewUrl ?? a.thumbUrl}
+                      name={a.originalName}
+                      isVideo={isDemoAssetVideo(a)}
+                    />
+                  </div>
+                )}
+                renderItem={(a, { setNodeRef, style, dragProps, isDragging }) => (
                   <li
-                    key={a.id}
-                    className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50/30 shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-900/40 dark:ring-white/[0.04] dark:hover:border-zinc-500"
+                    ref={setNodeRef}
+                    style={style}
+                    className={cn(
+                      "group overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50/30 shadow-sm ring-1 ring-zinc-900/[0.04] transition-[box-shadow,opacity] hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-900/40 dark:ring-white/[0.04] dark:hover:border-zinc-500",
+                      isDragging && "opacity-35",
+                    )}
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
                       <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
@@ -2225,13 +2288,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${a.originalName}`}
                         />
                       </label>
-                      <button
-                        type="button"
-                        className="absolute inset-0 z-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
-                        onClick={() => {
-                          setLightboxId(a.id);
-                          setLightboxZoom(1);
+                      <div
+                        {...dragProps}
+                        className={cn(
+                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none",
+                          !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
+                        )}
+                        onClick={() => openMediaPreview(a.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openMediaPreview(a.id);
+                          }
                         }}
+                        role="button"
+                        tabIndex={0}
                         aria-label={`Preview ${a.originalName}`}
                       >
                         <AdminMediaPreview
@@ -2244,7 +2315,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
-                      </button>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
                       <span
@@ -2269,8 +2340,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                       </button>
                     </div>
                   </li>
-                ))}
-              </ul>
+                )}
+              />
             )}
           </div>
         ) : null}
@@ -2538,11 +2609,29 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 No finals uploaded yet.
               </div>
             ) : (
-              <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {filteredFinalAssets.map((f) => (
+              <ReorderableMediaGrid
+                items={filteredFinalAssets}
+                disabled={mediaReorderDisabled}
+                dragGuardRef={reorderDragRef}
+                onOrderChange={(ordered) => void onMediaReorder("final", ordered)}
+                className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+                renderOverlay={(f) => (
+                  <div className="relative aspect-square w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
+                    <AdminMediaPreview
+                      src={f.url}
+                      name={f.name}
+                      isVideo={isDemoFinalAssetVideo(f)}
+                    />
+                  </div>
+                )}
+                renderItem={(f, { setNodeRef, style, dragProps, isDragging }) => (
                   <li
-                    key={f.id}
-                    className="group overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-900/[0.04] transition hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/[0.04] dark:hover:border-zinc-500"
+                    ref={setNodeRef}
+                    style={style}
+                    className={cn(
+                      "group overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-900/[0.04] transition-[box-shadow,opacity] hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/[0.04] dark:hover:border-zinc-500",
+                      isDragging && "opacity-35",
+                    )}
                   >
                     <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
                       <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
@@ -2555,13 +2644,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${f.name}`}
                         />
                       </label>
-                      <button
-                        type="button"
-                        className="absolute inset-0 z-0 flex h-full w-full text-left outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40"
-                        onClick={() => {
-                          setLightboxId(f.id);
-                          setLightboxZoom(1);
+                      <div
+                        {...dragProps}
+                        className={cn(
+                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none",
+                          !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
+                        )}
+                        onClick={() => openMediaPreview(f.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openMediaPreview(f.id);
+                          }
                         }}
+                        role="button"
+                        tabIndex={0}
                         aria-label={`Preview ${f.name}`}
                       >
                         <AdminMediaPreview
@@ -2574,7 +2671,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
-                      </button>
+                      </div>
                       {f.locked ? (
                         <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                           <Lock className="h-3 w-3" aria-hidden />
@@ -2605,8 +2702,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                       </button>
                     </div>
                   </li>
-                ))}
-              </ul>
+                )}
+              />
             )}
           </div>
         ) : null}
@@ -2912,98 +3009,41 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       ) : null}
 
       {lightboxId && lbItem ? (
-        <div
-          className="fixed inset-0 z-[115] flex items-center justify-center bg-black/85 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Image preview"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            aria-label="Close preview"
-            onClick={() => {
-              setLightboxId(null);
+        <GalleryLightbox
+          onClose={() => {
+            setLightboxId(null);
+            setLightboxZoom(1);
+          }}
+          zoom={lightboxZoom}
+          onZoomChange={setLightboxZoom}
+          ariaLabel="Image preview"
+          counter={`${lbNavIndex + 1} / ${lightboxNavItems.length}`}
+          title={lbItem.name || undefined}
+          hasPrev={lbNavIndex > 0}
+          hasNext={lbNavIndex >= 0 && lbNavIndex < lightboxNavItems.length - 1}
+          onPrev={() => {
+            const prev = lightboxNavItems[lbNavIndex - 1];
+            if (prev) {
+              setLightboxId(prev.id);
               setLightboxZoom(1);
-            }}
+            }
+          }}
+          onNext={() => {
+            const next = lightboxNavItems[lbNavIndex + 1];
+            if (next) {
+              setLightboxId(next.id);
+              setLightboxZoom(1);
+            }
+          }}
+          zoomable={!lbItem.isVideo}
+        >
+          <AdminMediaPreview
+            src={lbItem.src}
+            name={lbItem.name}
+            isVideo={lbItem.isVideo}
+            variant="lightbox"
           />
-          <div className="relative z-10 flex max-h-[90vh] max-w-5xl flex-1 flex-col gap-4">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setLightboxZoom((z) => Math.min(2.5, z + 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom +
-              </button>
-              <button
-                type="button"
-                onClick={() => setLightboxZoom((z) => Math.max(1, z - 0.25))}
-                className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Zoom −
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLightboxId(null);
-                  setLightboxZoom(1);
-                }}
-                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-900"
-              >
-                Close
-              </button>
-            </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto">
-              <AdminMediaPreview
-                src={lbItem.src}
-                name={lbItem.name}
-                isVideo={lbItem.isVideo}
-                variant="lightbox"
-                zoom={lightboxZoom}
-              />
-            </div>
-            <div className="flex items-center gap-4 text-white">
-              <button
-                type="button"
-                disabled={lbNavIndex <= 0}
-                onClick={() => {
-                  const prev = lightboxNavItems[lbNavIndex - 1];
-                  if (prev) {
-                    setLightboxId(prev.id);
-                    setLightboxZoom(1);
-                  }
-                }}
-                className="shrink-0 rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                ← Previous
-              </button>
-              <p
-                className="min-w-0 flex-1 truncate text-center text-sm text-white/90"
-                title={lbItem.name}
-              >
-                {lbNavIndex + 1} / {lightboxNavItems.length}
-                {lbItem.name ? (
-                  <span className="mt-1 block truncate text-xs text-white/70">{lbItem.name}</span>
-                ) : null}
-              </p>
-              <button
-                type="button"
-                disabled={lbNavIndex < 0 || lbNavIndex >= lightboxNavItems.length - 1}
-                onClick={() => {
-                  const next = lightboxNavItems[lbNavIndex + 1];
-                  if (next) {
-                    setLightboxId(next.id);
-                    setLightboxZoom(1);
-                  }
-                }}
-                className="shrink-0 rounded-full border border-white/30 px-4 py-2 text-sm disabled:opacity-30"
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        </div>
+        </GalleryLightbox>
       ) : null}
 
       {duplicateFilenamePrompt ? (

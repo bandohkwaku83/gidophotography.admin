@@ -5,6 +5,7 @@ import type {
   ApiFolderMedia,
   ApiFolderMediaBySetBucket,
   ApiFolderSet,
+  FolderMediaReorderResult,
 } from "@/lib/folders/types";
 
 export type FolderMediaDuplicatePreviewKind = "raw" | "final";
@@ -54,6 +55,12 @@ function bucketSetIdFromRow(b: Record<string, unknown>): string | null {
   return parseSetIdFromApiRow(b);
 }
 
+function mediaSortOrder(row: ApiFolderMedia): number {
+  const o = row as Record<string, unknown>;
+  const raw = o.sortOrder ?? o.sort_order;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : Number.MAX_SAFE_INTEGER;
+}
+
 /** Flatten `uploadsBySet` / `selectionBySet` / `finalsBySet` buckets into rows with `setId`. */
 export function flattenMediaFromBySetBuckets(buckets: unknown): ApiFolderMedia[] {
   if (!Array.isArray(buckets) || buckets.length === 0) return [];
@@ -64,7 +71,12 @@ export function flattenMediaFromBySetBuckets(buckets: unknown): ApiFolderMedia[]
     const bucketSetId = bucketSetIdFromRow(b);
     const media = b.media ?? b.uploads ?? b.items ?? b.files;
     if (!Array.isArray(media)) continue;
-    for (const row of media) {
+    const rows = [...media].sort((a, b) => {
+      const left = a && typeof a === "object" ? mediaSortOrder(a as ApiFolderMedia) : 0;
+      const right = b && typeof b === "object" ? mediaSortOrder(b as ApiFolderMedia) : 0;
+      return left - right;
+    });
+    for (const row of rows) {
       if (!row || typeof row !== "object") continue;
       const o = row as Record<string, unknown>;
       const rowSetId = parseSetIdFromApiRow(o) ?? bucketSetId;
@@ -75,6 +87,19 @@ export function flattenMediaFromBySetBuckets(buckets: unknown): ApiFolderMedia[]
     }
   }
   return out;
+}
+
+/** Merge media collections from a reorder PATCH into an existing folder snapshot. */
+export function applyFolderMediaReorderResponse(
+  folder: ApiFolder,
+  result: FolderMediaReorderResult,
+): ApiFolder {
+  const next: ApiFolder = { ...folder };
+  if (Array.isArray(result.uploads)) next.uploads = result.uploads;
+  if (Array.isArray(result.uploadsBySet)) next.uploadsBySet = result.uploadsBySet;
+  if (Array.isArray(result.finals)) next.finals = result.finals;
+  if (Array.isArray(result.finalsBySet)) next.finalsBySet = result.finalsBySet;
+  return next;
 }
 
 function readBySetBuckets(folder: ApiFolder, key: keyof ApiFolder): ApiFolderMediaBySetBucket[] | undefined {
@@ -112,6 +137,10 @@ export function parseSetIdFromApiRow(o: Record<string, unknown>): string | null 
   return null;
 }
 
+function sortMediaRows(rows: ApiFolderMedia[]): ApiFolderMedia[] {
+  return [...rows].sort((a, b) => mediaSortOrder(a) - mediaSortOrder(b));
+}
+
 export function extractRawMediaList(folder: ApiFolder): ApiFolderMedia[] {
   const bySet = readBySetBuckets(folder, "uploadsBySet");
   if (bySet?.length) {
@@ -121,7 +150,7 @@ export function extractRawMediaList(folder: ApiFolder): ApiFolderMedia[] {
   const f = folder as Record<string, unknown>;
   for (const k of ["uploads", "rawMedia", "rawFiles", "mediaRaw"]) {
     const v = f[k];
-    if (Array.isArray(v)) return v as ApiFolderMedia[];
+    if (Array.isArray(v)) return sortMediaRows(v as ApiFolderMedia[]);
   }
   const m = f.media;
   if (m && typeof m === "object" && Array.isArray((m as { raw?: unknown }).raw)) {
@@ -258,13 +287,13 @@ export function extractFinalMediaList(folder: ApiFolder): ApiFolderMedia[] {
   const f = folder as Record<string, unknown>;
   for (const k of ["finals", "finalMedia", "finalFiles"]) {
     const v = f[k];
-    if (Array.isArray(v)) return v as ApiFolderMedia[];
+    if (Array.isArray(v)) return sortMediaRows(v as ApiFolderMedia[]);
   }
   const m = f.media;
   if (m && typeof m === "object") {
     const o = m as { finals?: ApiFolderMedia[]; final?: ApiFolderMedia[] };
-    if (Array.isArray(o.finals)) return o.finals;
-    if (Array.isArray(o.final)) return o.final;
+    if (Array.isArray(o.finals)) return sortMediaRows(o.finals);
+    if (Array.isArray(o.final)) return sortMediaRows(o.final);
   }
   return [];
 }

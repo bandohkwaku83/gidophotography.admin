@@ -1,6 +1,10 @@
 import { apiUrl, sameOriginUploadsUrl } from "@/lib/api";
 import { clearAuth, getAuthToken } from "@/lib/auth-demo";
 import { authedFetch, extractMessage, parseJson } from "@/lib/http";
+import {
+  GALLERY_PUBLIC_ORIGIN_HEADER,
+  galleryPublicOriginHeaderValue,
+} from "@/lib/public-site-origin";
 
 import {
   resolveCoverUrl,
@@ -15,6 +19,7 @@ import {
   type DuplicateUploadAction,
   FoldersApiError,
   type FolderMoveToTrashResult,
+  type FolderMediaReorderResult,
   type ListFoldersResponse,
   type ListFoldersTrashResponse,
   type ListFoldersMediaTrashParams,
@@ -46,6 +51,10 @@ function authedFormDataPostWithProgress(
     xhr.open("POST", url);
     if (token) {
       xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+    const galleryOrigin = galleryPublicOriginHeaderValue();
+    if (galleryOrigin) {
+      xhr.setRequestHeader(GALLERY_PUBLIC_ORIGIN_HEADER, galleryOrigin);
     }
 
     xhr.upload.onprogress = (ev) => {
@@ -1279,6 +1288,74 @@ export async function patchFolderStatus(folderId: string, status: string): Promi
     );
   }
   return unwrapFolder(body);
+}
+
+function parseFolderMediaReorderResult(body: unknown): FolderMediaReorderResult {
+  const o = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const kindRaw = o.kind;
+  const kind: "raw" | "final" = kindRaw === "final" ? "final" : "raw";
+  const setIdRaw = o.setId ?? o.set_id;
+  const setId =
+    setIdRaw === null || setIdRaw === undefined || setIdRaw === ""
+      ? null
+      : typeof setIdRaw === "string"
+        ? setIdRaw
+        : null;
+  const updatedCountRaw = o.updatedCount ?? o.updated_count;
+  const updatedCount =
+    typeof updatedCountRaw === "number" && Number.isFinite(updatedCountRaw)
+      ? Math.max(0, Math.floor(updatedCountRaw))
+      : 0;
+  return {
+    message: extractMessage(body, "Order saved."),
+    updatedCount,
+    kind,
+    setId,
+    uploads: Array.isArray(o.uploads) ? (o.uploads as ApiFolderMedia[]) : undefined,
+    finals: Array.isArray(o.finals) ? (o.finals as ApiFolderMedia[]) : undefined,
+    uploadsBySet: Array.isArray(o.uploadsBySet)
+      ? (o.uploadsBySet as ApiFolder["uploadsBySet"])
+      : Array.isArray(o.uploads_by_set)
+        ? (o.uploads_by_set as ApiFolder["uploadsBySet"])
+        : undefined,
+    finalsBySet: Array.isArray(o.finalsBySet)
+      ? (o.finalsBySet as ApiFolder["finalsBySet"])
+      : Array.isArray(o.finals_by_set)
+        ? (o.finals_by_set as ApiFolder["finalsBySet"])
+        : undefined,
+  };
+}
+
+/** Persist drag-and-drop order for raw or final media in one set bucket. */
+export async function reorderFolderMedia(
+  folderId: string,
+  input: {
+    kind: "raw" | "final";
+    setId: string | null;
+    orderedIds: string[];
+  },
+): Promise<FolderMediaReorderResult> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/media/reorder`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: input.kind,
+        setId: input.setId,
+        orderedIds: input.orderedIds,
+      }),
+    },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to save order (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  return parseFolderMediaReorderResult(body);
 }
 
 function mergeSetsIntoFolder(folder: ApiFolder, body: unknown): ApiFolder {

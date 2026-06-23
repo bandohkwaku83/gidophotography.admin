@@ -78,6 +78,20 @@ export type ApiFolderMedia = {
   rawMediaId?: string;
   /** Selection row: raw soft-deleted from uploads list but file URLs still available on `raw`. */
   rawHiddenFromUploads?: boolean;
+  /** Display order within `(folderId, setId, kind)`; lower = earlier in gallery. */
+  sortOrder?: number;
+};
+
+/** Response from `PATCH /api/folders/:folderId/media/reorder`. */
+export type FolderMediaReorderResult = {
+  message: string;
+  updatedCount: number;
+  kind: "raw" | "final";
+  setId: string | null;
+  uploads?: ApiFolderMedia[];
+  finals?: ApiFolderMedia[];
+  uploadsBySet?: ApiFolderMediaBySetBucket[];
+  finalsBySet?: ApiFolderMediaBySetBucket[];
 };
 
 export type ApiFolder = {

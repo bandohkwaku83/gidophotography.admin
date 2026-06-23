@@ -1,5 +1,9 @@
 import { apiUrl } from "@/lib/api";
 import { clearAuth, getAuthToken } from "@/lib/auth-demo";
+import {
+  GALLERY_PUBLIC_ORIGIN_HEADER,
+  galleryPublicOriginHeaderValue,
+} from "@/lib/public-site-origin";
 
 /**
  * Base class for failures returned by an authenticated API call.
@@ -67,6 +71,11 @@ export async function authedFetch(
     !headers.has("Content-Type")
   ) {
     headers.set("Content-Type", "application/json");
+  }
+
+  const galleryOrigin = galleryPublicOriginHeaderValue();
+  if (galleryOrigin) {
+    headers.set(GALLERY_PUBLIC_ORIGIN_HEADER, galleryOrigin);
   }
 
   const res = await fetch(apiUrl(path), { ...init, headers });
