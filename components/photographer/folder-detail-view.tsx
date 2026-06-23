@@ -368,14 +368,22 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (activeSetFilter === "general") return finalAssets.filter((f) => !f.setId);
     return finalAssets.filter((f) => f.setId === activeSetFilter);
   }, [finalAssets, activeSetFilter]);
-  /** Reorder applies to one set bucket; disabled while viewing all collections. */
-  const mediaReorderDisabled =
-    activeSetFilter === "all" || busy || mediaDeleteBlocked() || reordering;
+  const assetsForReorderContext = tab === "finals" ? filteredFinalAssets : filteredRawAssets;
   const reorderSetId = useMemo((): string | null | undefined => {
-    if (activeSetFilter === "all") return undefined;
     if (activeSetFilter === "general") return null;
-    return activeSetFilter;
-  }, [activeSetFilter]);
+    if (activeSetFilter !== "all") return activeSetFilter;
+    if (folderSets.length === 0) return null;
+    const bucketKeys = new Set<string>();
+    for (const item of assetsForReorderContext) {
+      const sid = "setId" in item ? item.setId : undefined;
+      bucketKeys.add(sid ?? "");
+    }
+    if (bucketKeys.size !== 1) return undefined;
+    const only = [...bucketKeys][0]!;
+    return only === "" ? null : only;
+  }, [activeSetFilter, folderSets.length, assetsForReorderContext]);
+  const mediaReorderDisabled =
+    reorderSetId === undefined || busy || mediaDeleteBlocked() || reordering;
   const filteredClientSelectedAssets = useMemo(() => {
     if (activeSetFilter === "all") return clientSelectedAssets;
     if (activeSetFilter === "general") return clientSelectedAssets.filter((a) => !a.setId);
@@ -529,8 +537,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   useEffect(() => {
     setSelectedRawIds(new Set());
     setSelectedFinalIds(new Set());
-    setActiveSetFilter("all");
   }, [folderId]);
+
+  useEffect(() => {
+    if (!folder) return;
+    setActiveSetFilter(folderSets.length > 0 ? "general" : "all");
+  }, [folder?._id, folderSets.length]);
 
   useEffect(() => {
     setSelectedRawIds((prev) => {
@@ -1441,6 +1453,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         orderedIds: ordered.map((item) => item.id),
       });
       setFolder((prev) => (prev ? applyFolderMediaReorderResponse(prev, result) : prev));
+      showToast("Gallery order saved.", "success");
     } catch (e) {
       showToast(
         e instanceof FoldersApiError ? e.message : "Could not save order.",
@@ -2231,7 +2244,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             </div>
             {folderSets.length > 0 && activeSetFilter === "all" ? (
               <p className="rounded-xl border border-dashed border-brand/30 bg-brand/5 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-300">
-                Select a collection below to upload into that set. Choose{" "}
+                Select a collection below to upload or reorder photos. Choose{" "}
                 <span className="font-semibold">General</span> for uncategorized files.
               </p>
             ) : null}
@@ -2288,21 +2301,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${a.originalName}`}
                         />
                       </label>
-                      <div
+                      <button
+                        type="button"
                         {...dragProps}
                         className={cn(
-                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none",
+                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
                           !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
                         )}
                         onClick={() => openMediaPreview(a.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openMediaPreview(a.id);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
                         aria-label={`Preview ${a.originalName}`}
                       >
                         <AdminMediaPreview
@@ -2315,7 +2321,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
-                      </div>
+                      </button>
                     </div>
                     <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
                       <span
@@ -2644,21 +2650,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           aria-label={`Select ${f.name}`}
                         />
                       </label>
-                      <div
+                      <button
+                        type="button"
                         {...dragProps}
                         className={cn(
-                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none",
+                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
                           !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
                         )}
                         onClick={() => openMediaPreview(f.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openMediaPreview(f.id);
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
                         aria-label={`Preview ${f.name}`}
                       >
                         <AdminMediaPreview
@@ -2671,7 +2670,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
-                      </div>
+                      </button>
                       {f.locked ? (
                         <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                           <Lock className="h-3 w-3" aria-hidden />

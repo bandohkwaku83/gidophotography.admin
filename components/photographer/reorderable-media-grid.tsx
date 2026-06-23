@@ -98,8 +98,8 @@ export function ReorderableMediaGrid<T extends { id: string }>({
   }, [itemsKey, items]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 280, tolerance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
   );
 
   const ids = useMemo(() => ordered.map((item) => item.id), [ordered]);
