@@ -54,6 +54,11 @@ import {
 } from "@/lib/branding";
 import { filterAssetsBySetView } from "@/lib/folders/helpers";
 import {
+  buildOrderedCollectionRows,
+  collectionKeyToSetFilter,
+  GENERAL_COLLECTION_KEY,
+} from "@/lib/folders/helpers";
+import {
   fetchShareFinalDownloadBlob,
   tryNavigatorShareFinalPhoto,
   getShareFinalDownloadUrl,
@@ -408,6 +413,11 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const showFinalsTab = gallery ? gallery.finalDelivery !== false : true;
   const gallerySets = gallery?.sets ?? [];
   const hasCollections = gallerySets.length > 0;
+  const allTabLabel = gallery?.allMediaLabel ?? "All";
+  const collectionTabs = useMemo(() => {
+    if (!hasCollections || !gallery) return [];
+    return buildOrderedCollectionRows(gallery, gallerySets);
+  }, [gallery, gallerySets, hasCollections]);
 
   const selectedCount = assets.filter((a) => a.selection === "SELECTED").length;
   const maxClientSelections = gallery?.maxClientSelections ?? null;
@@ -478,6 +488,16 @@ export function ClientGalleryApp({ token }: { token: string }) {
     },
     [photoTab, gallery, assets],
   );
+
+  const getGeneralCollectionCount = useCallback(() => {
+    if (photoTab === "edited") {
+      return gallery?.finals.filter((f) => !f.setId).length ?? 0;
+    }
+    if (photoTab === "selected") {
+      return assets.filter((a) => a.selection === "SELECTED" && !a.setId).length;
+    }
+    return assets.filter((a) => !a.setId).length;
+  }, [photoTab, gallery, assets]);
 
   /** One place for coarse-pointer final Save / Share wording (Share sheet vs in‑app browsers). */
   const touchMobileFinalSaveUx = useMemo(() => {
@@ -1164,35 +1184,45 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                 )}
               >
-                All
+                {allTabLabel}
               </button>
-              {gallerySets.map((set) => (
-                <button
-                  key={set._id}
-                  type="button"
-                  role="tab"
-                  aria-selected={collectionFilter === set._id}
-                  onClick={() => setCollectionFilter(set._id)}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
-                    collectionFilter === set._id
-                      ? "bg-brand text-white shadow-sm shadow-brand/25"
-                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-                  )}
-                >
-                  {set.name}
-                  <span
+              {collectionTabs.map((tab) => {
+                const filter = collectionKeyToSetFilter(tab.key);
+                const isActive = collectionFilter === filter;
+                const count =
+                  tab.key === GENERAL_COLLECTION_KEY
+                    ? getGeneralCollectionCount()
+                    : tab.set
+                      ? getCollectionSetCount(tab.set)
+                      : 0;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setCollectionFilter(filter)}
                     className={cn(
-                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-                      collectionFilter === set._id
-                        ? "bg-white/20 text-white"
-                        : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300",
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
+                      isActive
+                        ? "bg-brand text-white shadow-sm shadow-brand/25"
+                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                     )}
                   >
-                    {getCollectionSetCount(set)}
-                  </span>
-                </button>
-              ))}
+                    {tab.label}
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300",
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

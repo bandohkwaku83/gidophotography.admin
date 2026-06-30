@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import {
   ArrowLeft,
   Calendar,
@@ -60,6 +61,8 @@ import {
   apiFolderMediaToFinal,
   apiFolderStatusToUi,
   applyFolderMediaReorderResponse,
+  buildOrderedCollectionRows,
+  collectionKeyToSetFilter,
   extractFinalMediaList,
   extractRawMediaList,
   extractSelectionMediaList,
@@ -103,6 +106,11 @@ import {
   type UploadFolderMediaFormOptions,
   extractFolderSets,
   extractMaxClientSelections,
+  folderAllMediaLabel,
+  folderGeneralSetLabel,
+  GENERAL_COLLECTION_KEY,
+  patchFolderGalleryCollectionLabels,
+  reorderFolderSets,
 } from "@/lib/folders-api";
 import { resolveFolderShareOrigin } from "@/lib/public-site-origin";
 import { getDuplicateUploadPreference } from "@/lib/upload-preferences";
@@ -213,6 +221,11 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
   const reorderDragRef = useRef(false);
   const [reordering, setReordering] = useState(false);
+  const collectionsDragRef = useRef(false);
+  const [reorderingCollections, setReorderingCollections] = useState(false);
+  const [editingLabelKind, setEditingLabelKind] = useState<"all" | "general" | null>(null);
+  const [editingLabelDraft, setEditingLabelDraft] = useState("");
+  const [savingCollectionLabel, setSavingCollectionLabel] = useState(false);
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const coverFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -358,6 +371,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return picked.length > 0 ? picked : selectionRows;
   }, [selectionRows]);
   const folderSets = useMemo(() => (folder ? extractFolderSets(folder) : []), [folder]);
+  const allMediaLabel = useMemo(() => folderAllMediaLabel(folder), [folder]);
+  const generalSetLabel = useMemo(() => folderGeneralSetLabel(folder), [folder]);
+  const orderedCollectionRows = useMemo(
+    () => (folder ? buildOrderedCollectionRows(folder, folderSets) : []),
+    [folder, folderSets],
+  );
+  const collectionReorderItems = useMemo(
+    () => orderedCollectionRows.map((row) => ({ id: row.key, label: row.label, row })),
+    [orderedCollectionRows],
+  );
   const filteredRawAssets = useMemo(() => {
     if (activeSetFilter === "all") return rawAssets;
     if (activeSetFilter === "general") return rawAssets.filter((a) => !a.setId);
@@ -1465,6 +1488,70 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     }
   }
 
+  function startCollectionLabelEdit(kind: "all" | "general") {
+    if (!folder || savingCollectionLabel) return;
+    setEditingLabelKind(kind);
+    setEditingLabelDraft(kind === "all" ? allMediaLabel : generalSetLabel);
+  }
+
+  async function onSaveCollectionLabel() {
+    if (!folder || !editingLabelKind || savingCollectionLabel) return;
+    const draft = editingLabelDraft.trim();
+    if (!draft) {
+      showToast("Collection name cannot be empty.", "error");
+      return;
+    }
+    setSavingCollectionLabel(true);
+    try {
+      const updated = await patchFolderGalleryCollectionLabels(folder._id, {
+        ...(editingLabelKind === "all"
+          ? { allMediaLabel: draft }
+          : { generalSetLabel: draft }),
+      });
+      setFolder(updated);
+      setEditingLabelKind(null);
+      setEditingLabelDraft("");
+      showToast("Collection name updated.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not update collection name.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setSavingCollectionLabel(false);
+    }
+  }
+
+  async function onCollectionsReorder(ordered: { id: string }[]) {
+    if (!folder || reorderingCollections) return;
+    setReorderingCollections(true);
+    try {
+      const updated = await reorderFolderSets(
+        folder._id,
+        ordered.map((item) => item.id),
+      );
+      setFolder(updated);
+      showToast("Collection order saved.", "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not save collection order.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setReorderingCollections(false);
+    }
+  }
+
   async function onCreateSet() {
     if (!folder || creatingSet) return;
     const name = newSetName.trim();
@@ -2010,86 +2097,27 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             <div className="flex flex-wrap items-center gap-2">
               {folderSets.length > 0 ? (
                 <>
-              <button
-                type="button"
-                onClick={() => setActiveSetFilter("all")}
-                className={cn(
-                  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
-                  activeSetFilter === "all"
-                    ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-                )}
-                aria-pressed={activeSetFilter === "all"}
-              >
-                All Media
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveSetFilter("general")}
-                className={cn(
-                  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
-                  activeSetFilter === "general"
-                    ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-                )}
-                aria-pressed={activeSetFilter === "general"}
-              >
-                General
-                <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
-                  {generalCount}
-                </span>
-              </button>
-              {folderSets.map((setItem) => (
-                <button
-                  type="button"
-                  key={setItem._id}
-                  onClick={() => {
-                    setActiveSetFilter(setItem._id);
-                    if (editingSetId && editingSetId !== setItem._id) {
-                      setEditingSetId(null);
-                      setEditingSetName("");
-                    }
-                  }}
-                  className={cn(
-                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition",
-                    activeSetFilter === setItem._id
-                      ? "border-brand/30 bg-brand/10 text-brand dark:border-brand/40 dark:bg-brand/20 dark:text-brand-100"
-                      : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-                  )}
-                  title={setItem.name}
-                  aria-pressed={activeSetFilter === setItem._id}
-                >
-                  {setItem.name}
-                  <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
-                    {getSetCount(setItem._id)}
-                  </span>
-                </button>
-              ))}
-              {activeSetItem ? (
-                <div className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
-                  {editingSetId === activeSetItem._id ? (
-                    <>
+                  {editingLabelKind === "all" ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
                       <input
                         type="text"
-                        value={editingSetName}
-                        onChange={(e) => setEditingSetName(e.target.value)}
+                        value={editingLabelDraft}
+                        onChange={(e) => setEditingLabelDraft(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") void onSaveSetEdit(activeSetItem._id);
+                          if (e.key === "Enter") void onSaveCollectionLabel();
                           if (e.key === "Escape") {
-                            setEditingSetId(null);
-                            setEditingSetName("");
+                            setEditingLabelKind(null);
+                            setEditingLabelDraft("");
                           }
                         }}
                         className="w-32 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-600 dark:bg-zinc-900"
-                        aria-label={`Rename ${activeSetItem.name}`}
+                        aria-label="Rename all media collection"
                         autoFocus
                       />
                       <button
                         type="button"
-                        onClick={() => void onSaveSetEdit(activeSetItem._id)}
-                        disabled={
-                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
-                        }
+                        onClick={() => void onSaveCollectionLabel()}
+                        disabled={savingCollectionLabel}
                         className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
                       >
                         Save
@@ -2097,50 +2125,242 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingSetId(null);
-                          setEditingSetName("");
+                          setEditingLabelKind(null);
+                          setEditingLabelDraft("");
                         }}
-                        disabled={
-                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
-                        }
+                        disabled={savingCollectionLabel}
                         className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
                       >
                         Cancel
                       </button>
-                    </>
+                    </span>
                   ) : (
-                    <>
+                    <span className="inline-flex items-center gap-0.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingSetId(activeSetItem._id);
-                          setEditingSetName(activeSetItem.name);
-                        }}
-                        disabled={
-                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
-                        }
-                        aria-label={`Edit collection ${activeSetItem.name}`}
-                        title="Edit collection"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-45 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                        onClick={() => setActiveSetFilter("all")}
+                        className={cn(
+                          "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
+                          activeSetFilter === "all"
+                            ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
+                            : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                        )}
+                        aria-pressed={activeSetFilter === "all"}
+                      >
+                        {allMediaLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startCollectionLabelEdit("all")}
+                        disabled={savingCollectionLabel}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-45 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                        aria-label={`Rename ${allMediaLabel}`}
+                        title="Rename"
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void onDeleteSet(activeSetItem._id, activeSetItem.name)}
-                        disabled={
-                          savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id
-                        }
-                        aria-label={`Delete collection ${activeSetItem.name}`}
-                        title="Delete collection"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-red-600 transition hover:bg-red-50 disabled:opacity-45 dark:text-red-400 dark:hover:bg-red-950/30"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      </button>
-                    </>
+                    </span>
                   )}
-                </div>
-              ) : null}
+                  <ReorderableMediaGrid
+                    items={collectionReorderItems}
+                    disabled={reorderingCollections || !!savingSetId || !!deletingSetId}
+                    dragGuardRef={collectionsDragRef}
+                    strategy={horizontalListSortingStrategy}
+                    onOrderChange={(ordered) => void onCollectionsReorder(ordered)}
+                    className="flex flex-wrap items-center gap-2"
+                    renderItem={(item, { setNodeRef, style, dragProps, isDragging }) => {
+                      const filter = collectionKeyToSetFilter(item.id);
+                      const isActive = activeSetFilter === filter;
+                      const count =
+                        item.id === GENERAL_COLLECTION_KEY
+                          ? generalCount
+                          : getSetCount(item.id);
+                      const chipLabel =
+                        item.id === GENERAL_COLLECTION_KEY ? generalSetLabel : item.label;
+
+                      if (
+                        item.id === GENERAL_COLLECTION_KEY &&
+                        editingLabelKind === "general"
+                      ) {
+                        return (
+                          <li ref={setNodeRef} style={style} className="list-none">
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
+                              <input
+                                type="text"
+                                value={editingLabelDraft}
+                                onChange={(e) => setEditingLabelDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") void onSaveCollectionLabel();
+                                  if (e.key === "Escape") {
+                                    setEditingLabelKind(null);
+                                    setEditingLabelDraft("");
+                                  }
+                                }}
+                                className="w-32 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-600 dark:bg-zinc-900"
+                                aria-label="Rename general collection"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void onSaveCollectionLabel()}
+                                disabled={savingCollectionLabel}
+                                className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingLabelKind(null);
+                                  setEditingLabelDraft("");
+                                }}
+                                disabled={savingCollectionLabel}
+                                className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          </li>
+                        );
+                      }
+
+                      return (
+                        <li
+                          ref={setNodeRef}
+                          style={style}
+                          className={cn("list-none", isDragging && "opacity-50")}
+                        >
+                          <span className="inline-flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              {...dragProps}
+                              onClick={() => {
+                                if (collectionsDragRef.current) return;
+                                setActiveSetFilter(filter);
+                                if (
+                                  item.id !== GENERAL_COLLECTION_KEY &&
+                                  editingSetId &&
+                                  editingSetId !== item.id
+                                ) {
+                                  setEditingSetId(null);
+                                  setEditingSetName("");
+                                }
+                              }}
+                              className={cn(
+                                "inline-flex touch-none items-center rounded-full border px-3 py-1 text-xs font-medium transition",
+                                isActive
+                                  ? "border-brand/30 bg-brand/10 text-brand dark:border-brand/40 dark:bg-brand/20 dark:text-brand-100"
+                                  : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+                                !reorderingCollections &&
+                                  "cursor-grab active:cursor-grabbing",
+                              )}
+                              aria-pressed={isActive}
+                              title={chipLabel}
+                            >
+                              {chipLabel}
+                              <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
+                                {count}
+                              </span>
+                            </button>
+                            {item.id === GENERAL_COLLECTION_KEY ? (
+                              <button
+                                type="button"
+                                onClick={() => startCollectionLabelEdit("general")}
+                                disabled={savingCollectionLabel}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-45 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                                aria-label={`Rename ${generalSetLabel}`}
+                                title="Rename"
+                              >
+                                <Pencil className="h-3.5 w-3.5" aria-hidden />
+                              </button>
+                            ) : null}
+                          </span>
+                        </li>
+                      );
+                    }}
+                  />
+                  {activeSetItem ? (
+                    <div className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
+                      {editingSetId === activeSetItem._id ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editingSetName}
+                            onChange={(e) => setEditingSetName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void onSaveSetEdit(activeSetItem._id);
+                              if (e.key === "Escape") {
+                                setEditingSetId(null);
+                                setEditingSetName("");
+                              }
+                            }}
+                            className="w-32 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-600 dark:bg-zinc-900"
+                            aria-label={`Rename ${activeSetItem.name}`}
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void onSaveSetEdit(activeSetItem._id)}
+                            disabled={
+                              savingSetId === activeSetItem._id ||
+                              deletingSetId === activeSetItem._id
+                            }
+                            className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSetId(null);
+                              setEditingSetName("");
+                            }}
+                            disabled={
+                              savingSetId === activeSetItem._id ||
+                              deletingSetId === activeSetItem._id
+                            }
+                            className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSetId(activeSetItem._id);
+                              setEditingSetName(activeSetItem.name);
+                            }}
+                            disabled={
+                              savingSetId === activeSetItem._id ||
+                              deletingSetId === activeSetItem._id
+                            }
+                            aria-label={`Edit collection ${activeSetItem.name}`}
+                            title="Edit collection"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-45 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void onDeleteSet(activeSetItem._id, activeSetItem.name)
+                            }
+                            disabled={
+                              savingSetId === activeSetItem._id ||
+                              deletingSetId === activeSetItem._id
+                            }
+                            aria-label={`Delete collection ${activeSetItem.name}`}
+                            title="Delete collection"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-red-600 transition hover:bg-red-50 disabled:opacity-45 dark:text-red-400 dark:hover:bg-red-950/30"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                 </>
               ) : null}
               <input
@@ -2245,7 +2465,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             {folderSets.length > 0 && activeSetFilter === "all" ? (
               <p className="rounded-xl border border-dashed border-brand/30 bg-brand/5 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-300">
                 Select a collection below to upload or reorder photos. Choose{" "}
-                <span className="font-semibold">General</span> for uncategorized files.
+                <span className="font-semibold">{generalSetLabel}</span> for uncategorized files.
               </p>
             ) : null}
             <UploadDragger

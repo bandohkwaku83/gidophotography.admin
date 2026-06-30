@@ -1,6 +1,11 @@
 import { apiUrl, API_BASE_URL, sameOriginUploadsUrl } from "@/lib/api";
 import { parseFolderCoverFocal } from "@/lib/folders-api";
-import { parseSetIdFromApiRow } from "@/lib/folders/helpers";
+import {
+  folderAllMediaLabel,
+  folderGeneralSetLabel,
+  parseSetIdFromApiRow,
+  readGeneralSetSortOrder,
+} from "@/lib/folders/helpers";
 import { extractMessage, HttpError, parseJson } from "@/lib/http";
 
 export type ShareGallerySet = {
@@ -73,6 +78,12 @@ export type NormalizedShareGallery = {
   finals: ShareGalleryFinal[];
   /** Named collections within this gallery (empty = hide collection chips). */
   sets: ShareGallerySet[];
+  /** Custom “all” tab label for clients (defaults to “All”). */
+  allMediaLabel?: string;
+  /** Custom general / uncategorized tab label (defaults to “General”). */
+  generalSetLabel?: string;
+  /** Sort position of the general bucket among named collections. */
+  generalSetSortOrder?: number;
   counts?: { uploads: number; selected: number; finals: number };
 };
 
@@ -728,6 +739,9 @@ export function normalizeShareGalleryBody(body: unknown): NormalizedShareGallery
     assets,
     finals,
     sets,
+    allMediaLabel: folderAllMediaLabel(folderPayload, true),
+    generalSetLabel: folderGeneralSetLabel(folderPayload),
+    generalSetSortOrder: readGeneralSetSortOrder(folderPayload),
     counts,
   };
 }

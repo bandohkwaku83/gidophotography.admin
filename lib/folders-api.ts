@@ -647,6 +647,8 @@ export async function updateFolder(
         input.useDefaultCover === undefined ? undefined : input.useDefaultCover ? "true" : "false",
       ...focalFields,
       backgroundMusicEnabled: input.backgroundMusicEnabled,
+      allMediaLabel: input.allMediaLabel,
+      generalSetLabel: input.generalSetLabel,
     },
     input.coverImage,
   );
@@ -1498,4 +1500,82 @@ export async function deleteFolderSet(folderId: string, setId: string): Promise<
   }
   const folder = await getFolder(folderId);
   return mergeSetsIntoFolder(folder, body);
+}
+
+function applyFolderSetsReorderResponse(folder: ApiFolder, body: unknown): ApiFolder {
+  if (!body || typeof body !== "object") return folder;
+  const o = body as Record<string, unknown>;
+  const nested =
+    o.folder && typeof o.folder === "object" ? (o.folder as Record<string, unknown>) : o;
+  const next: ApiFolder = { ...folder };
+  if (Array.isArray(nested.sets)) next.sets = nested.sets as ApiFolder["sets"];
+  const gso = nested.generalSetSortOrder ?? nested.general_set_sort_order;
+  if (typeof gso === "number" && Number.isFinite(gso)) next.generalSetSortOrder = gso;
+  const aml = nested.allMediaLabel ?? nested.all_media_label;
+  if (typeof aml === "string") next.allMediaLabel = aml.trim() || undefined;
+  const gsl = nested.generalSetLabel ?? nested.general_set_label;
+  if (typeof gsl === "string") next.generalSetLabel = gsl.trim() || undefined;
+  return next;
+}
+
+/** Rename virtual collection tabs (“All media”, “General”). */
+export async function patchFolderGalleryCollectionLabels(
+  folderId: string,
+  input: { allMediaLabel?: string; generalSetLabel?: string },
+): Promise<ApiFolder> {
+  const payload: Record<string, string> = {};
+  if (input.allMediaLabel !== undefined) payload.allMediaLabel = input.allMediaLabel.trim();
+  if (input.generalSetLabel !== undefined) payload.generalSetLabel = input.generalSetLabel.trim();
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/gallery-collections`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to update collection labels (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  if (body && typeof body === "object" && "folder" in body) {
+    return (body as { folder: ApiFolder }).folder;
+  }
+  const folder = await getFolder(folderId);
+  return applyFolderSetsReorderResponse(folder, body);
+}
+
+/**
+ * Reorder collection tabs. Keys are `"general"` or set `_id` strings (not `"all"`).
+ * `PATCH /api/folders/:folderId/sets/reorder`
+ */
+export async function reorderFolderSets(
+  folderId: string,
+  orderedKeys: string[],
+): Promise<ApiFolder> {
+  const res = await authedFetch(
+    `/api/folders/${encodeURIComponent(folderId)}/sets/reorder`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedKeys }),
+    },
+  );
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to reorder collections (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  if (body && typeof body === "object" && "folder" in body) {
+    return (body as { folder: ApiFolder }).folder;
+  }
+  const folder = await getFolder(folderId);
+  return applyFolderSetsReorderResponse(folder, body);
 }

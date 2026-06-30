@@ -16,7 +16,9 @@ import {
   SortableContext,
   arrayMove,
   rectSortingStrategy,
+  horizontalListSortingStrategy,
   useSortable,
+  type SortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
@@ -32,6 +34,7 @@ type ReorderableMediaGridProps<T extends { id: string }> = {
   items: T[];
   disabled?: boolean;
   className?: string;
+  strategy?: SortingStrategy;
   onOrderChange?: (ordered: T[]) => void;
   /** Set to true while a drag reorder is active; use to suppress lightbox clicks. */
   dragGuardRef?: React.MutableRefObject<boolean>;
@@ -82,6 +85,7 @@ export function ReorderableMediaGrid<T extends { id: string }>({
   items,
   disabled,
   className,
+  strategy = rectSortingStrategy,
   onOrderChange,
   dragGuardRef,
   renderItem,
@@ -143,7 +147,7 @@ export function ReorderableMediaGrid<T extends { id: string }>({
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
     >
-      <SortableContext items={ids} strategy={rectSortingStrategy}>
+      <SortableContext items={ids} strategy={strategy}>
         <ul className={cn(className, activeId && "touch-none")}>
           {ordered.map((item) => (
             <SortableTile

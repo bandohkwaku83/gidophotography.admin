@@ -127,6 +127,12 @@ export type ApiFolder = {
   maxClientSelections?: number | null;
   /** Named sub-galleries within this folder (e.g. “At the park”, “Exclusives”). */
   sets?: ApiFolderSet[];
+  /** Custom label for the “all media” collection tab (dashboard + client). */
+  allMediaLabel?: string;
+  /** Custom label for the uncategorized / general collection tab. */
+  generalSetLabel?: string;
+  /** Sort position of the general bucket among collection tabs (with named sets). */
+  generalSetSortOrder?: number;
   /** Raw uploads not assigned to a set. */
   generalMediaCount?: number;
   totalRawMediaCount?: number;
@@ -194,6 +200,8 @@ export type UpdateFolderInput = {
   coverFocalX?: number;
   coverFocalY?: number;
   backgroundMusicEnabled?: boolean;
+  allMediaLabel?: string;
+  generalSetLabel?: string;
 };
 
 /** Response when moving a gallery to trash (`DELETE /api/folders/:id`). */

@@ -50,6 +50,86 @@ export function extractFolderSets(folder: ApiFolder): ApiFolderSet[] {
   return [...sets].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
+/** Sentinel for the uncategorized bucket in collection reorder APIs. */
+export const GENERAL_COLLECTION_KEY = "general";
+
+export const DEFAULT_ALL_MEDIA_LABEL = "All Media";
+export const DEFAULT_CLIENT_ALL_LABEL = "All";
+export const DEFAULT_GENERAL_SET_LABEL = "General";
+
+export type OrderedCollectionRow = {
+  key: string;
+  label: string;
+  sortOrder: number;
+  set?: ApiFolderSet;
+};
+
+function readOptionalLabel(o: Record<string, unknown> | null | undefined, ...keys: string[]): string {
+  if (!o) return "";
+  for (const key of keys) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+export function folderAllMediaLabel(
+  folder: ApiFolder | Record<string, unknown> | null | undefined,
+  client = false,
+): string {
+  const o = folder && typeof folder === "object" ? (folder as Record<string, unknown>) : null;
+  const custom = readOptionalLabel(o, "allMediaLabel", "all_media_label");
+  if (custom) return custom;
+  return client ? DEFAULT_CLIENT_ALL_LABEL : DEFAULT_ALL_MEDIA_LABEL;
+}
+
+export function folderGeneralSetLabel(
+  folder: ApiFolder | Record<string, unknown> | null | undefined,
+): string {
+  const o = folder && typeof folder === "object" ? (folder as Record<string, unknown>) : null;
+  const custom = readOptionalLabel(o, "generalSetLabel", "general_set_label");
+  return custom || DEFAULT_GENERAL_SET_LABEL;
+}
+
+export function readGeneralSetSortOrder(
+  folder: ApiFolder | Record<string, unknown> | null | undefined,
+): number {
+  const o = folder && typeof folder === "object" ? (folder as Record<string, unknown>) : null;
+  const raw = o?.generalSetSortOrder ?? o?.general_set_sort_order;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  return -1;
+}
+
+/** General + named sets in display order (excludes the virtual “all” tab). */
+export function buildOrderedCollectionRows(
+  folder: ApiFolder | Record<string, unknown> | null | undefined,
+  sets: ApiFolderSet[],
+): OrderedCollectionRow[] {
+  const general: OrderedCollectionRow = {
+    key: GENERAL_COLLECTION_KEY,
+    label: folderGeneralSetLabel(folder),
+    sortOrder: readGeneralSetSortOrder(folder),
+  };
+  const named: OrderedCollectionRow[] = [...sets]
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    .map((set) => ({
+    key: set._id,
+    label: set.name,
+    sortOrder: set.sortOrder ?? 0,
+    set,
+  }));
+  return [...named, general].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export function collectionKeyToSetFilter(key: string): "general" | string {
+  return key === GENERAL_COLLECTION_KEY ? "general" : key;
+}
+
+export function setFilterToCollectionKey(filter: "all" | "general" | string): string {
+  if (filter === "general") return GENERAL_COLLECTION_KEY;
+  return filter;
+}
+
 function bucketSetIdFromRow(b: Record<string, unknown>): string | null {
   if (b.setId === null || b.set_id === null) return null;
   return parseSetIdFromApiRow(b);
