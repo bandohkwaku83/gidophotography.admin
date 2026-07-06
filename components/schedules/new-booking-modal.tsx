@@ -51,6 +51,7 @@ export function NewBookingModal({
   const [kind, setKind] = useState<ShootKind>("portraits");
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
+  const [amountGHS, setAmountGHS] = useState("");
 
   const [clients, setClients] = useState<ApiClient[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
@@ -83,6 +84,11 @@ export function NewBookingModal({
       setKind(bookingToEdit.kind);
       setLocation(bookingToEdit.location ?? "");
       setDescription(bookingToEdit.description ?? "");
+      setAmountGHS(
+        bookingToEdit.amountGHS != null && bookingToEdit.amountGHS > 0
+          ? String(bookingToEdit.amountGHS)
+          : "",
+      );
     } else {
       setDate(defaultDate);
       setTitle("");
@@ -92,6 +98,7 @@ export function NewBookingModal({
       setKind(defaultKindFromShootTypes(shootTypes));
       setLocation("");
       setDescription("");
+      setAmountGHS("");
     }
     setAddClientOpen(false);
     setSubmitting(false);
@@ -131,6 +138,7 @@ export function NewBookingModal({
     }
     setSubmitting(true);
     try {
+      const parsedAmount = amountGHS.trim() === "" ? undefined : Number(amountGHS);
       const draft: NewBookingDraft = {
         title: t,
         clientId,
@@ -141,6 +149,10 @@ export function NewBookingModal({
         location: location.trim() || undefined,
         kind,
         description: description.trim() || undefined,
+        amountGHS:
+          parsedAmount != null && Number.isFinite(parsedAmount) && parsedAmount > 0
+            ? Math.round(parsedAmount * 100) / 100
+            : undefined,
       };
       if (bookingToEdit) {
         if (!onReplace) {
@@ -330,6 +342,21 @@ export function NewBookingModal({
                 className={inputClass}
                 disabled={submitting}
               />
+            </div>
+
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Amount (GHS)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={amountGHS}
+                onChange={(e) => setAmountGHS(e.target.value)}
+                placeholder="Optional agreed fee"
+                className={inputClass}
+                disabled={submitting}
+              />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">Optional — used when generating invoices.</p>
             </div>
 
             <div className="grid gap-2">

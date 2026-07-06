@@ -16,14 +16,14 @@ export function GalleryCardSkeleton({ className }: { className?: string }) {
         className,
       )}
     >
-      <div className="aspect-[5/3] w-full overflow-hidden">
+      <div className="aspect-[4/3] w-full overflow-hidden">
         <Skeleton.Image
           active
-          className="!flex !h-full !min-h-[140px] !w-full !items-center !justify-center !rounded-none"
+          className="!flex !h-full !min-h-[100px] !w-full !items-center !justify-center !rounded-none"
         />
       </div>
-      <div className="border-t border-zinc-100 p-4 dark:border-zinc-800">
-        <Skeleton active title={{ width: "68%" }} paragraph={{ rows: 2, width: ["52%", "36%"] }} />
+      <div className="px-3 py-2.5">
+        <Skeleton active title={{ width: "68%" }} paragraph={{ rows: 1, width: "45%" }} />
       </div>
     </div>
   );

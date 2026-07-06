@@ -38,6 +38,8 @@ export type BookedShoot = {
   description?: string;
   /** API legend color key (`red`, `sky`, …) for dots when present. */
   shootColor?: string;
+  /** Optional agreed shoot fee in GHS (not required). */
+  amountGHS?: number;
 };
 
 export const KIND_META: Record<

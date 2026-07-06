@@ -10,6 +10,7 @@ import {
   MapPin,
   Pencil,
   Plus,
+  FileText,
   Trash2,
 } from "lucide-react";
 import { DashboardPage } from "@/components/photographer/dashboard-page";
@@ -83,7 +84,7 @@ function isToday(y: number, m: number, day: number) {
 }
 
 function draftToCreateBookingBody(draft: NewBookingDraft): CreateBookingBody {
-  return {
+  const body: CreateBookingBody = {
     title: draft.title,
     clientId: draft.clientId,
     date: draft.date,
@@ -93,6 +94,10 @@ function draftToCreateBookingBody(draft: NewBookingDraft): CreateBookingBody {
     location: draft.location?.trim() ?? "",
     description: draft.description?.trim() ?? "",
   };
+  if (draft.amountGHS != null && draft.amountGHS > 0) {
+    body.amountGHS = draft.amountGHS;
+  }
+  return body;
 }
 
 /** Keep calendar/sidebar aligned with what the user just saved (draft) even when the PUT body or TZ parsing differs slightly from the raw API row. */
@@ -108,6 +113,7 @@ function overlayDraftOnBookedShoot(mapped: BookedShoot, draft: NewBookingDraft):
     location: draft.location,
     description: draft.description,
     kind: draft.kind,
+    amountGHS: draft.amountGHS,
   };
 }
 
@@ -615,6 +621,17 @@ export function SchedulesClient() {
                             aria-label={`Edit ${s.title}`}
                           >
                             <Pencil className="h-3.5 w-3.5" aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              router.push(`/dashboard/invoices?booking=${encodeURIComponent(s.id)}`);
+                            }}
+                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-brand dark:hover:bg-zinc-950 dark:hover:text-brand-on-dark"
+                            aria-label={`Generate invoice for ${s.title}`}
+                            title="Generate invoice"
+                          >
+                            <FileText className="h-3.5 w-3.5" aria-hidden />
                           </button>
                           <button
                             type="button"

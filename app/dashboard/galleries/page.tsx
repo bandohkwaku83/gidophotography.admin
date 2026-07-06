@@ -241,8 +241,8 @@ export default function GalleriesPage() {
       </section>
 
       {showSpinner ? (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {Array.from({ length: 6 }).map((_, i) => (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
             <GalleryCardSkeleton key={i} />
           ))}
         </div>
@@ -273,7 +273,7 @@ export default function GalleriesPage() {
           ) : null}
         </div>
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visibleFolders.map((g) => (
             <FolderCard
               key={g._id}

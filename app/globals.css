@@ -137,6 +137,51 @@
   }
 }
 
+/* Invoice print: hide dashboard chrome, preserve template colors */
+@media print {
+  @page {
+    margin: 0.45in;
+    size: A4;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  /* Hide app shell */
+  aside,
+  header {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .invoice-print-root {
+    position: relative !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .invoice-print-root,
+  .invoice-print-root * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .ant-message,
+  .ant-notification {
+    display: none !important;
+  }
+}
+
 @keyframes toast-enter {
   from {
     opacity: 0;

@@ -39,6 +39,7 @@ export type ApiBooking = {
   endsAt: string | null;
   location?: string;
   description?: string;
+  amountGHS?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -57,6 +58,7 @@ export type CreateBookingBody = {
   end: string;
   location: string;
   description: string;
+  amountGHS?: number;
 };
 
 /** Partial update payload for `PATCH /api/bookings/:id` (matches backend PATCH semantics). */
@@ -145,6 +147,10 @@ export function mapApiBookingToBookedShoot(b: ApiBooking): BookedShoot {
     kind: apiShootTypeToKind(b.shootType),
     description: b.description?.trim() || undefined,
     shootColor: b.color,
+    amountGHS:
+      typeof b.amountGHS === "number" && Number.isFinite(b.amountGHS) && b.amountGHS >= 0
+        ? b.amountGHS
+        : undefined,
   };
 }
 

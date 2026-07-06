@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock3,
   FolderOpen,
+  FileText,
   MessageSquare,
   Plus,
   Sparkles,
@@ -95,6 +96,12 @@ const QUICK_LINKS: QuickItem[] = [
     label: "Schedules",
     sub: "Booked shoots",
     icon: Calendar,
+  },
+  {
+    href: "/dashboard/invoices",
+    label: "Invoices",
+    sub: "Generate & print PDFs",
+    icon: FileText,
   },
   {
     href: "/dashboard/sms",

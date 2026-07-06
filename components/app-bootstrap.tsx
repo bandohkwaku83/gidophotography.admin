@@ -14,6 +14,7 @@ const PRIORITY_ROUTES = [
   "/dashboard/clients",
   "/dashboard/settings",
   "/dashboard/schedules",
+  "/dashboard/invoices",
   "/dashboard/communication",
   "/dashboard/uploads",
   "/dashboard/storage",

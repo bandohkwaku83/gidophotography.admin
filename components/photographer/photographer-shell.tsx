@@ -25,6 +25,7 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  FileText,
   Search,
   Settings,
   Trash2,
@@ -58,6 +59,12 @@ const WORKSPACE_NAV: ShellNavItem[] = [
     label: "Schedules",
     icon: CalendarDays,
     isActive: (p) => p.startsWith("/dashboard/schedules"),
+  },
+  {
+    href: "/dashboard/invoices",
+    label: "Invoices",
+    icon: FileText,
+    isActive: (p) => p.startsWith("/dashboard/invoices"),
   },
   {
     href: "/dashboard/galleries",
@@ -215,7 +222,7 @@ export function PhotographerShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SearchContext.Provider value={searchValue}>
-      <div className="relative flex min-h-screen bg-[#F9FAFB] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+      <div className="relative flex min-h-screen bg-[#F9FAFB] text-zinc-900 print:bg-white dark:bg-zinc-950 dark:text-zinc-50">
         <div className="pointer-events-none absolute inset-0 bg-transparent" />
         <aside className="relative hidden min-h-screen w-[280px] shrink-0 flex-col border-r border-white/[0.06] bg-zinc-950 bg-[radial-gradient(120%_80%_at_50%_-10%,rgba(99,102,241,0.14)_0%,transparent_55%)] lg:flex lg:flex-col">
           <div className="flex flex-1 flex-col px-5 pb-8 pt-10">
@@ -405,7 +412,7 @@ export function PhotographerShell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto p-4 sm:p-5 lg:p-6 xl:p-8">
+          <main className="flex-1 overflow-auto p-4 print:p-0 sm:p-5 lg:p-6 xl:p-8">
             {children}
           </main>
         </div>
