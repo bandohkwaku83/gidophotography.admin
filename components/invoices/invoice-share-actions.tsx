@@ -11,6 +11,7 @@ import {
   openEmailClientForInvoice,
   openWhatsAppApp,
   shareInvoicePdfFile,
+  shareInvoicePdfToWhatsApp,
 } from "@/lib/invoice-export";
 import type { InvoiceDraft } from "@/lib/invoices-types";
 import { cn } from "@/lib/utils";
@@ -47,27 +48,28 @@ export function InvoiceShareActions({ invoice, className }: Props) {
     }
   }
 
-  async function sharePdfViaApp(hint: "whatsapp" | "email") {
+  async function sharePdfViaEmail() {
     const { blob, filename } = await buildPdf();
     const result = await shareInvoicePdfFile(blob, filename);
 
     if (result === "shared" || result === "aborted") return;
 
     downloadBlob(blob, filename);
-    if (hint === "email") {
-      openEmailClientForInvoice(invoice);
-      showToast("PDF downloaded — attach it in your email app.", "info");
-      return;
-    }
-    openWhatsAppApp();
-    showToast("PDF downloaded — attach it in WhatsApp.", "info");
+    openEmailClientForInvoice(invoice);
+    showToast("PDF downloaded — attach it in your email app.", "info");
   }
 
   async function handleWhatsApp() {
     if (busy) return;
     setBusy("whatsapp");
     try {
-      await sharePdfViaApp("whatsapp");
+      const { blob, filename } = await buildPdf();
+      const result = await shareInvoicePdfToWhatsApp(blob, filename);
+      if (result === "shared" || result === "aborted") return;
+
+      downloadBlob(blob, filename);
+      openWhatsAppApp();
+      showToast("PDF downloaded — attach it in WhatsApp.", "info");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Could not share PDF via WhatsApp.", "error");
     } finally {
@@ -79,7 +81,7 @@ export function InvoiceShareActions({ invoice, className }: Props) {
     if (busy) return;
     setBusy("email");
     try {
-      await sharePdfViaApp("email");
+      await sharePdfViaEmail();
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Could not share PDF via email.", "error");
     } finally {
@@ -110,7 +112,7 @@ export function InvoiceShareActions({ invoice, className }: Props) {
         disabled={disabled}
         className={cn(iconBtn, "text-[#25D366] hover:bg-[#25D366]/10 dark:hover:bg-[#25D366]/15")}
         aria-label="Share PDF via WhatsApp"
-        title="Share PDF via WhatsApp"
+        title="Share PDF via WhatsApp — pick WhatsApp, then choose a contact"
       >
         {busy === "whatsapp" ? (
           <Loader2 className="h-5 w-5 animate-spin text-zinc-500" aria-hidden />

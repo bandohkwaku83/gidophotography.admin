@@ -309,6 +309,26 @@ function invoicePdfFile(blob: Blob, filename: string): File {
   return new File([blob], filename, { type: "application/pdf" });
 }
 
+/** Share PDF via system share — pick WhatsApp to open the app with the file attached, then choose a contact. */
+export async function shareInvoicePdfToWhatsApp(blob: Blob, filename: string): Promise<SharePdfResult> {
+  if (typeof navigator === "undefined" || typeof navigator.share !== "function") {
+    return "unsupported";
+  }
+
+  const file = invoicePdfFile(blob, filename);
+  const payload: ShareData & { files: File[] } = { files: [file] };
+
+  try {
+    await navigator.share(payload);
+    return "shared";
+  } catch (e) {
+    const aborted =
+      e instanceof DOMException ? e.name === "AbortError" : (e as { name?: string })?.name === "AbortError";
+    if (aborted) return "aborted";
+    return "unsupported";
+  }
+}
+
 /** Share the PDF file only — no text body (some apps prefer text over files if both are set). */
 export async function shareInvoicePdfFile(blob: Blob, filename: string): Promise<SharePdfResult> {
   if (typeof navigator === "undefined" || typeof navigator.share !== "function") {
@@ -333,20 +353,10 @@ export async function shareInvoicePdfFile(blob: Blob, filename: string): Promise
   }
 }
 
-function isMobileUa(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-/** Opens WhatsApp without prefilling a text message — attach the downloaded PDF in the app. */
+/** Opens the native WhatsApp app (mobile or desktop). Pair with a PDF download to attach the file. */
 export function openWhatsAppApp() {
-  const mobile = isMobileUa();
-  const url = mobile ? "whatsapp://send" : "https://web.whatsapp.com/";
-  if (mobile) {
-    window.location.href = url;
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
+  if (typeof window === "undefined") return;
+  window.location.assign("whatsapp://send");
 }
 
 /** Opens the default email client — mailto cannot attach files; pair with a PDF download. */

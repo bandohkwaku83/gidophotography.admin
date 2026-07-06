@@ -13,13 +13,21 @@ import { InvoiceShareActions } from "@/components/invoices/invoice-share-actions
 import { useToast } from "@/components/toast-provider";
 import { KIND_META, SHOOT_KINDS_ORDER, type ShootKind } from "@/components/schedules/booking-types";
 import type { BookedShoot } from "@/components/schedules/booking-types";
-import { getBooking, listAdvanceBookings, mapApiBookingToBookedShoot } from "@/lib/bookings-api";
+import {
+  apiShootTypeToKind,
+  getBooking,
+  getBookingsMeta,
+  listAdvanceBookings,
+  mapApiBookingToBookedShoot,
+  type BookingShootTypeMeta,
+} from "@/lib/bookings-api";
 import { listClients, type ApiClient } from "@/lib/clients-api";
 import {
   createInvoiceFromForm,
   defaultLineItemsForBooking,
   invoiceDraftToFormState,
   paymentStatusFromAmounts,
+  shootKindFromShootTypeLabel,
 } from "@/lib/invoices-dummy";
 import type { InvoiceDraft, InvoiceLineItem, InvoicePaymentStatus } from "@/lib/invoices-types";
 import { ApiError } from "@/lib/clients-api";
@@ -55,6 +63,46 @@ function formatIsoDateLabel(iso: string): string {
   } catch {
     return s;
   }
+}
+
+function defaultShootTypeId(meta: BookingShootTypeMeta[]): string {
+  if (meta.length > 0) return meta[0].id;
+  return "portraits";
+}
+
+function shootTypeIdForBooking(b: BookedShoot, meta: BookingShootTypeMeta[]): string {
+  if (meta.length > 0) {
+    const byKind = meta.find((t) => apiShootTypeToKind(t.id) === b.kind);
+    if (byKind) return byKind.id;
+    const byLabel = meta.find((t) => t.label === KIND_META[b.kind].label);
+    if (byLabel) return byLabel.id;
+  }
+  return b.kind;
+}
+
+function shootTypeIdFromDraftLabel(label: string | undefined, meta: BookingShootTypeMeta[]): string {
+  const t = label?.trim();
+  if (!t) return defaultShootTypeId(meta);
+  if (meta.length > 0) {
+    const hit = meta.find((m) => m.label === t || m.id === t);
+    if (hit) return hit.id;
+  }
+  return shootKindFromShootTypeLabel(t);
+}
+
+function shootTypeLabelFromId(id: string, meta: BookingShootTypeMeta[]): string {
+  const hit = meta.find((m) => m.id === id);
+  if (hit) return hit.label;
+  const kind = id as ShootKind;
+  return KIND_META[kind]?.label ?? id;
+}
+
+function shootKindFromTypeId(id: string, meta: BookingShootTypeMeta[]): ShootKind {
+  if (meta.length > 0) {
+    const hit = meta.find((m) => m.id === id);
+    if (hit) return apiShootTypeToKind(hit.id);
+  }
+  return (id in KIND_META ? id : "other") as ShootKind;
 }
 
 function toAmountGHS(v: string): number {
@@ -216,7 +264,9 @@ export default function InvoicesPage() {
   const [bookingLoadError, setBookingLoadError] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
-  const [shootKind, setShootKind] = useState<ShootKind>("portraits");
+  const [shootTypeId, setShootTypeId] = useState<string>("portraits");
+  const [shootTypesMeta, setShootTypesMeta] = useState<BookingShootTypeMeta[]>([]);
+  const [shootTypesLoading, setShootTypesLoading] = useState(true);
   const [clientId, setClientId] = useState("");
   const [shootDateISO, setShootDateISO] = useState(todayISO);
   const [lineItems, setLineItems] = useState<InvoiceLineItem[]>(() => [
@@ -290,14 +340,17 @@ export default function InvoicesPage() {
     }
   }, []);
 
-  const applyBookingToForm = useCallback((b: BookedShoot) => {
-    setTitle(b.title);
-    setShootKind(b.kind);
-    setClientId(b.clientId);
-    setShootDateISO(b.date);
-    setLineItems(defaultLineItemsForBooking(b));
-    setAmountPaying("");
-  }, []);
+  const applyBookingToForm = useCallback(
+    (b: BookedShoot) => {
+      setTitle(b.title);
+      setShootTypeId(shootTypeIdForBooking(b, shootTypesMeta));
+      setClientId(b.clientId);
+      setShootDateISO(b.date);
+      setLineItems(defaultLineItemsForBooking(b));
+      setAmountPaying("");
+    },
+    [shootTypesMeta],
+  );
 
   const loadBookingById = useCallback(
     async (id: string) => {
@@ -315,6 +368,37 @@ export default function InvoicesPage() {
   useEffect(() => {
     void refreshAdvanceBookings();
   }, [refreshAdvanceBookings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setShootTypesLoading(true);
+    void getBookingsMeta()
+      .then((meta) => {
+        if (!cancelled) setShootTypesMeta(meta.shootTypes);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          showToast(e instanceof Error ? e.message : "Could not load shoot types.", "error");
+          setShootTypesMeta([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setShootTypesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  useEffect(() => {
+    if (shootTypesMeta.length === 0) return;
+    setShootTypeId((prev) => {
+      if (shootTypesMeta.some((t) => t.id === prev)) return prev;
+      const byKind = shootTypesMeta.find((t) => apiShootTypeToKind(t.id) === prev);
+      if (byKind) return byKind.id;
+      return shootTypesMeta[0].id;
+    });
+  }, [shootTypesMeta]);
 
   useEffect(() => {
     if (!bookingFocusId) return;
@@ -341,6 +425,23 @@ export default function InvoicesPage() {
       cancelled = true;
     };
   }, [showToast]);
+
+  const shootTypeSelectOptions = useMemo(() => {
+    if (shootTypesMeta.length > 0) {
+      return shootTypesMeta.map((t) => ({ value: t.id, label: t.label }));
+    }
+    return SHOOT_KINDS_ORDER.map((k) => ({ value: k, label: KIND_META[k].label }));
+  }, [shootTypesMeta]);
+
+  const resolvedShootKind = useMemo(
+    () => shootKindFromTypeId(shootTypeId, shootTypesMeta),
+    [shootTypeId, shootTypesMeta],
+  );
+
+  const resolvedShootTypeLabel = useMemo(
+    () => shootTypeLabelFromId(shootTypeId, shootTypesMeta),
+    [shootTypeId, shootTypesMeta],
+  );
 
   const bookingSelectOptions = useMemo(
     () =>
@@ -385,15 +486,23 @@ export default function InvoicesPage() {
       const state = invoiceDraftToFormState(draft, clients, todayISO);
       setSelectedBookingId(state.selectedBookingId);
       setTitle(state.title);
-      setShootKind(state.shootKind);
+      setShootTypeId(shootTypeIdFromDraftLabel(draft.shootType, shootTypesMeta));
       setClientId(state.clientId);
       setShootDateISO(state.shootDateISO);
       setLineItems(state.lineItems);
       setAmountPaying(state.amountPaying);
       setInvoiceDraft(draft);
     },
-    [clients, todayISO],
+    [clients, todayISO, shootTypesMeta],
   );
+
+  useEffect(() => {
+    if (!invoiceDraft?.shootType || shootTypesMeta.length === 0) return;
+    setShootTypeId((prev) => {
+      if (shootTypesMeta.some((m) => m.id === prev)) return prev;
+      return shootTypeIdFromDraftLabel(invoiceDraft.shootType, shootTypesMeta);
+    });
+  }, [invoiceDraft?.shootType, shootTypesMeta]);
 
   useEffect(() => {
     if (createMode !== "edit" || !invoiceDraft || clientId) return;
@@ -409,7 +518,8 @@ export default function InvoicesPage() {
     if (!canGenerate || !clientName) return null;
     return createInvoiceFromForm({
       title: title.trim(),
-      shootKind,
+      shootKind: resolvedShootKind,
+      shootTypeLabel: resolvedShootTypeLabel,
       clientName,
       shootDateISO,
       bookingId: selectedBookingId || undefined,
@@ -429,7 +539,8 @@ export default function InvoicesPage() {
     canGenerate,
     clientName,
     title,
-    shootKind,
+    resolvedShootKind,
+    resolvedShootTypeLabel,
     shootDateISO,
     selectedBookingId,
     linkedBooking?.location,
@@ -466,7 +577,8 @@ export default function InvoicesPage() {
 
     const draft = createInvoiceFromForm({
       title: title.trim(),
-      shootKind,
+      shootKind: resolvedShootKind,
+      shootTypeLabel: resolvedShootTypeLabel,
       clientName,
       shootDateISO,
       bookingId: selectedBookingId || undefined,
@@ -510,7 +622,7 @@ export default function InvoicesPage() {
   function resetCreateForm() {
     setSelectedBookingId("");
     setTitle("");
-    setShootKind("portraits");
+    setShootTypeId(defaultShootTypeId(shootTypesMeta));
     setClientId("");
     setShootDateISO(todayISO);
     setLineItems([{ description: "", quantity: 1, unitPriceGHS: 0 }]);
@@ -682,17 +794,17 @@ export default function InvoicesPage() {
                 </div>
                 <div>
                   <RequiredLabel>Shoot type</RequiredLabel>
-                  <select
-                    value={shootKind}
-                    onChange={(e) => setShootKind(e.target.value as ShootKind)}
-                    className={`mt-1.5 ${inputClass}`}
-                  >
-                    {SHOOT_KINDS_ORDER.map((k) => (
-                      <option key={k} value={k}>
-                        {KIND_META[k].label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    loading={shootTypesLoading}
+                    value={shootTypeId || undefined}
+                    options={shootTypeSelectOptions}
+                    onChange={(v) => setShootTypeId(v)}
+                    className="mt-1.5 w-full"
+                    size="large"
+                    placeholder="Select shoot type"
+                  />
                 </div>
               </div>
 

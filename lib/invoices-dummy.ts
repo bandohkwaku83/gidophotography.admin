@@ -67,6 +67,8 @@ export function defaultTotalForBooking(b: BookedShoot): number {
 export type InvoiceFormInput = {
   title: string;
   shootKind: ShootKind;
+  /** When set, used on the invoice instead of {@link KIND_META}[shootKind].label (e.g. from bookings meta). */
+  shootTypeLabel?: string;
   clientName: string;
   shootDateISO: string;
   bookingId?: string;
@@ -137,7 +139,7 @@ export function createInvoiceFromForm(input: InvoiceFormInput): InvoiceDraft {
   const issuedDate = input.preserve?.invoiceDateISO ?? todayIso();
   const dueDate = input.preserve?.dueDateISO ?? addDaysIso(issuedDate, 7);
   const invoiceNo = input.preserve?.invoiceNo ?? nextInvoiceNo();
-  const shootLabel = KIND_META[input.shootKind].label;
+  const shootLabel = input.shootTypeLabel?.trim() || KIND_META[input.shootKind].label;
   const title = input.title.trim() || "Photography session";
   const items = normalizeItems(input.items);
   const subtotalGHS = Math.round(subtotalFromItems(items) * 100) / 100;
