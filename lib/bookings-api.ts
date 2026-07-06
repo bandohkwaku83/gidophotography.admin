@@ -211,6 +211,31 @@ export async function listBookings(params: {
   };
 }
 
+/** Bookings from this month through the next N months (for invoice linking, etc.). */
+export async function listAdvanceBookings(monthsAhead = 12): Promise<ListBookingsResponse> {
+  const start = new Date();
+  const tasks: Promise<ListBookingsResponse>[] = [];
+  for (let i = 0; i < monthsAhead; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    tasks.push(
+      listBookings({
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        type: "",
+      }),
+    );
+  }
+  const results = await Promise.all(tasks);
+  const byId = new Map<string, ApiBooking>();
+  for (const r of results) {
+    for (const b of r.bookings) {
+      byId.set(b._id, b);
+    }
+  }
+  const bookings = [...byId.values()].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  return { count: bookings.length, bookings };
+}
+
 export async function getBooking(id: string): Promise<ApiBooking> {
   const res = await authedFetch(`/api/bookings/${encodeURIComponent(id)}`, { method: "GET" });
   const body = await parseJson(res);

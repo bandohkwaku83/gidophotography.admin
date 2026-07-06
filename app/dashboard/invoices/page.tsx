@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Input, Select } from "antd";
-import { ArrowLeft, Plus, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, Trash2, UserPlus } from "lucide-react";
 import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { CreateClientModal } from "@/components/photographer/create-client-modal";
 import { InvoiceHistoryList } from "@/components/invoices/invoice-history-list";
@@ -12,7 +13,7 @@ import { InvoiceShareActions } from "@/components/invoices/invoice-share-actions
 import { useToast } from "@/components/toast-provider";
 import { KIND_META, SHOOT_KINDS_ORDER, type ShootKind } from "@/components/schedules/booking-types";
 import type { BookedShoot } from "@/components/schedules/booking-types";
-import { getBooking, listBookings, mapApiBookingToBookedShoot } from "@/lib/bookings-api";
+import { getBooking, listAdvanceBookings, mapApiBookingToBookedShoot } from "@/lib/bookings-api";
 import { listClients, type ApiClient } from "@/lib/clients-api";
 import {
   createInvoiceFromForm,
@@ -42,6 +43,18 @@ function isoFromInputOrToday(v: string | undefined): string {
   const today = `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
   const s = (v ?? "").trim();
   return s || today;
+}
+
+function formatIsoDateLabel(iso: string): string {
+  const s = iso.trim();
+  if (!s) return "—";
+  try {
+    const d = new Date(s.includes("T") ? s : `${s}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return s;
+  }
 }
 
 function toAmountGHS(v: string): number {
@@ -263,12 +276,11 @@ export default function InvoicesPage() {
     }
   }, [bookingFocusId]);
 
-  const refreshBookingsForCurrentMonth = useCallback(async () => {
+  const refreshAdvanceBookings = useCallback(async () => {
     setBookingOptionsLoading(true);
     setBookingLoadError(null);
     try {
-      const now = new Date();
-      const res = await listBookings({ year: now.getFullYear(), month: now.getMonth() + 1, type: "" });
+      const res = await listAdvanceBookings();
       setBookingOptions(res.bookings.map(mapApiBookingToBookedShoot));
     } catch (e) {
       setBookingOptions([]);
@@ -301,8 +313,8 @@ export default function InvoicesPage() {
   );
 
   useEffect(() => {
-    void refreshBookingsForCurrentMonth();
-  }, [refreshBookingsForCurrentMonth]);
+    void refreshAdvanceBookings();
+  }, [refreshAdvanceBookings]);
 
   useEffect(() => {
     if (!bookingFocusId) return;
@@ -337,7 +349,7 @@ export default function InvoicesPage() {
         .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`))
         .map((b) => ({
           value: b.id,
-          label: `${b.title} · ${b.clientName} · ${b.date}`,
+          label: `${b.title} · ${b.clientName} · ${formatIsoDateLabel(b.date)}`,
         })),
     [bookingOptions],
   );
@@ -620,7 +632,7 @@ export default function InvoicesPage() {
                   action={
                     <button
                       type="button"
-                      onClick={() => void refreshBookingsForCurrentMonth()}
+                      onClick={() => void refreshAdvanceBookings()}
                       className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
                     >
                       Retry
@@ -647,6 +659,13 @@ export default function InvoicesPage() {
                 <p className="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">
                   Optional — pulls title, client, shoot type, date, and line items from a booking.
                 </p>
+                <Link
+                  href="/dashboard/schedules"
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand transition hover:text-brand-hover dark:text-brand-on-dark dark:hover:text-white"
+                >
+                  Show all advance bookings
+                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
               </div>
 
               {/* Title + shoot type */}
