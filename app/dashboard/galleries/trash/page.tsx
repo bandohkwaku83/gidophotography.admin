@@ -519,7 +519,7 @@ export default function GalleriesTrashPage() {
                 className={cn(
                   "flex flex-1 items-center justify-center gap-2 px-4 py-3 text-sm font-semibold transition sm:flex-none sm:px-6",
                   visibleTab === "galleries"
-                    ? "border-b-2 border-brand text-brand-ink dark:border-brand dark:text-brand-on-dark"
+                    ? "border-b-2 border-studio-ink text-studio-ink"
                     : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
                 )}
               >
@@ -537,7 +537,7 @@ export default function GalleriesTrashPage() {
                 className={cn(
                   "flex flex-1 items-center justify-center gap-2 px-4 py-3 text-sm font-semibold transition sm:flex-none sm:px-6",
                   visibleTab === "files"
-                    ? "border-b-2 border-brand text-brand-ink dark:border-brand dark:text-brand-on-dark"
+                    ? "border-b-2 border-studio-ink text-studio-ink"
                     : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
                 )}
               >
@@ -560,7 +560,7 @@ export default function GalleriesTrashPage() {
                   type="button"
                   disabled={purging || data.folders.length === 0}
                   onClick={toggleSelectAllFolders}
-                  className="text-xs font-semibold text-brand-ink hover:text-brand dark:text-brand-on-dark dark:hover:text-brand disabled:opacity-40"
+                  className="text-xs font-semibold text-studio-ink hover:underline disabled:opacity-40"
                 >
                   {allFoldersSelected ? "Deselect all" : "Select all"}
                 </button>
@@ -648,7 +648,7 @@ export default function GalleriesTrashPage() {
                                 "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
                                 expired || busy || purging
                                   ? "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
-                                  : "bg-brand text-white hover:bg-brand-hover",
+                                  : "bg-studio-ink text-white hover:bg-studio-charcoal",
                               )}
                             >
                               {busy ? (
@@ -680,7 +680,7 @@ export default function GalleriesTrashPage() {
                   type="button"
                   disabled={purging || allTrashedMedia.length === 0}
                   onClick={toggleSelectAllMedia}
-                  className="text-xs font-semibold text-brand-ink hover:text-brand dark:text-brand-on-dark dark:hover:text-brand disabled:opacity-40"
+                  className="text-xs font-semibold text-studio-ink hover:underline disabled:opacity-40"
                 >
                   {allMediaSelected ? "Deselect all" : "Select all"}
                 </button>
@@ -806,9 +806,8 @@ export default function GalleriesTrashPage() {
                       disabled={mediaLoadingMore || purging}
                       onClick={() => void loadMoreMedia()}
                       className={cn(
-                        "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-700 transition",
-                        "hover:border-brand/35 hover:bg-brand-soft/50 hover:text-brand-ink dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
-                        "disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-brand/15 dark:hover:text-brand-on-dark",
+                        "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-700 transition hover:border-studio-ink hover:bg-[#f5f5f5] hover:text-studio-ink",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
                       )}
                     >
                       {mediaLoadingMore ? (

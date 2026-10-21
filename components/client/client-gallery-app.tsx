@@ -87,7 +87,7 @@ type CollectionFilter = "all" | string;
 function tileActionClass(active = false): string {
   return cn(
     "inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/45 text-white shadow-sm backdrop-blur-md transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-45",
-    active ? "bg-brand/90 hover:bg-brand" : "bg-black/35 hover:bg-black/60",
+    active ? "bg-black/80 hover:bg-black" : "bg-black/35 hover:bg-black/60",
   );
 }
 
@@ -873,7 +873,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 setLoadState("error");
               });
           }}
-          className="mt-4 rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white"
+          className="mt-4 rounded-full bg-studio-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-studio-charcoal"
         >
           Try again
         </button>
@@ -1140,7 +1140,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                               className={cn(
                                 "flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition",
                                 active
-                                  ? "bg-brand/10 text-brand dark:bg-brand/20 dark:text-brand-100"
+                                  ? "bg-[#f5f5f5] text-studio-ink"
                                   : "text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800",
                               )}
                             >
@@ -1180,7 +1180,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                 className={cn(
                   "inline-flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
                   collectionFilter === "all"
-                    ? "bg-brand text-white shadow-sm shadow-brand/25"
+                    ? "bg-studio-ink text-white"
                     : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                 )}
               >
@@ -1205,7 +1205,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                     className={cn(
                       "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
                       isActive
-                        ? "bg-brand text-white shadow-sm shadow-brand/25"
+                        ? "bg-studio-ink text-white"
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                     )}
                   >

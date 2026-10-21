@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderOpen, Plus, Search, Sparkles, X } from "lucide-react";
+import Link from "next/link";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Plus, Search, X } from "lucide-react";
 import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { FolderCard } from "@/components/photographer/folder-card";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import { CreateFolderModal } from "@/components/photographer/create-folder-modal";
 import { useToast } from "@/components/toast-provider";
+import { cn } from "@/lib/utils";
 import {
   apiFolderStatusToUi,
   deleteFolder,
@@ -28,8 +31,10 @@ const STATUS_FILTERS: { key: GalleryStatusFilter; label: string }[] = [
   { key: "COMPLETED", label: "Done" },
 ];
 
-export default function GalleriesPage() {
+function GalleriesPageInner() {
   const { query, setQuery } = useFolderListSearch();
+  const searchParams = useSearchParams();
+  const clientFilter = searchParams.get("client")?.trim() ?? "";
   const { showToast } = useToast();
 
   const [folders, setFolders] = useState<ApiFolder[]>([]);
@@ -46,11 +51,14 @@ export default function GalleriesPage() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const fetchFolders = useCallback(
-    async (search: string, signal?: AbortSignal) => {
+    async (search: string, clientId: string, signal?: AbortSignal) => {
       setLoading(true);
       setError(null);
       try {
-        const list = await listFolders({ search });
+        const list = await listFolders({
+          search,
+          clientId: clientId || undefined,
+        });
         if (signal?.aborted) return;
         setFolders(list);
       } catch (err) {
@@ -66,13 +74,13 @@ export default function GalleriesPage() {
   useEffect(() => {
     const controller = new AbortController();
     const handle = setTimeout(() => {
-      fetchFolders(query.trim(), controller.signal);
+      fetchFolders(query.trim(), clientFilter, controller.signal);
     }, 250);
     return () => {
       clearTimeout(handle);
       controller.abort();
     };
-  }, [query, fetchFolders]);
+  }, [query, clientFilter, fetchFolders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,63 +148,84 @@ export default function GalleriesPage() {
   const showSpinner = loading && folders.length === 0;
   const trimmed = useMemo(() => query.trim(), [query]);
 
+  const statusCounts = useMemo(() => {
+    let draft = 0;
+    let selecting = 0;
+    let done = 0;
+    for (const folder of folders) {
+      const status = apiFolderStatusToUi(folder.status);
+      if (status === "COMPLETED") done += 1;
+      else if (status === "SELECTION_PENDING") selecting += 1;
+      else draft += 1;
+    }
+    return {
+      all: folders.length,
+      DRAFT: draft,
+      SELECTION_PENDING: selecting,
+      COMPLETED: done,
+    };
+  }, [folders]);
+
   const openCreate = () => {
     setEditing(null);
     setCreateOpen(true);
   };
 
   return (
-    <DashboardPage className="space-y-8">
-      <section className="relative overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-8">
-        <div
-          className="pointer-events-none absolute -right-16 -top-12 h-48 w-48 rounded-full bg-brand/[0.12] blur-3xl dark:bg-brand/10"
-          aria-hidden
-        />
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-lg shadow-brand/25">
-              <FolderOpen className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-[1.65rem] sm:leading-tight">
-                Galleries
-              </h1>
-              <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-                Open a gallery to upload raws, track client selection, and deliver finals all in one
-                place.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/25 transition hover:bg-brand-hover focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 dark:focus:ring-offset-zinc-950"
-          >
-            <Sparkles className="h-4 w-4" aria-hidden="true" />
-            New gallery
-          </button>
+    <DashboardPage className="space-y-5">
+      <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-tight text-studio-ink">Galleries</h1>
+          <p className="mt-0.5 max-w-xl text-sm text-studio-taupe">
+            Upload raws, track client selection, and deliver finals.
+          </p>
         </div>
+        <button
+          type="button"
+          onClick={openCreate}
+          className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start rounded-lg bg-studio-ink px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-studio-charcoal"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden />
+          New gallery
+        </button>
       </section>
 
       {error ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200/90 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7D4D4] bg-[#F8F1F1] px-4 py-3 text-sm text-studio-burgundy">
           <span>{error}</span>
           <button
             type="button"
-            onClick={() => fetchFolders(trimmed)}
-            className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/60 dark:text-red-200 dark:hover:bg-red-900/40"
+            onClick={() => fetchFolders(trimmed, clientFilter)}
+            className="rounded-lg border border-[#E7D4D4] bg-white px-3 py-1.5 text-xs font-medium text-studio-burgundy transition hover:bg-[#F3E4E4]"
           >
             Retry
           </button>
         </div>
       ) : null}
 
-      <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-md">
+      {clientFilter ? (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-studio-taupe">
+          <span>
+            Galleries for{" "}
+            <span className="font-medium text-studio-ink">
+              {clientNameById.get(clientFilter) ?? "this client"}
+            </span>
+          </span>
+          <Link
+            href="/dashboard/galleries"
+            className="inline-flex items-center gap-1 rounded-lg bg-[#f5f5f5] px-2.5 py-1 text-[12px] font-medium text-studio-ink transition hover:bg-[#ececec]"
+          >
+            Show all
+            <X className="h-3 w-3" aria-hidden />
+          </Link>
+        </div>
+      ) : null}
+
+      <section className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full lg:max-w-sm">
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
-            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-studio-taupe"
+            aria-hidden
           />
           <input
             id="gallery-page-search"
@@ -204,36 +233,41 @@ export default function GalleriesPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search galleries"
-            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-10 text-sm text-zinc-900 outline-none ring-brand/35 transition placeholder:text-zinc-400 focus:border-brand focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50 dark:ring-brand/40 dark:placeholder:text-zinc-500"
+            className="w-full rounded-lg border border-studio-line bg-white py-2 pr-10 pl-9 text-sm text-studio-ink shadow-[0_1px_2px_rgba(26,22,18,0.04)] outline-none transition placeholder:text-[#b3a89a] focus:border-studio-gold focus:ring-2 focus:ring-studio-gold/25"
             aria-label="Search galleries"
           />
           {query ? (
             <button
               type="button"
               onClick={() => setQuery("")}
-              className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              className="absolute top-1/2 right-2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-studio-taupe transition hover:bg-[#f5f5f5] hover:text-studio-ink"
               aria-label="Clear gallery search"
             >
-              <X className="h-4 w-4" aria-hidden="true" />
+              <X className="h-4 w-4" aria-hidden />
             </button>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter galleries by status">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter galleries by status">
           {STATUS_FILTERS.map((filter) => {
             const active = statusFilter === filter.key;
+            const count = statusCounts[filter.key];
             return (
               <button
                 key={filter.key}
                 type="button"
                 aria-pressed={active}
                 onClick={() => setStatusFilter(filter.key)}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition",
                   active
-                    ? "bg-brand text-white"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                }`}
+                    ? "bg-studio-ink text-white"
+                    : "bg-[#f5f5f5] text-studio-ink hover:bg-[#ececec]",
+                )}
               >
                 {filter.label}
+                <span className={cn("tabular-nums", active ? "text-white/70" : "text-studio-taupe")}>
+                  {count}
+                </span>
               </button>
             );
           })}
@@ -241,39 +275,38 @@ export default function GalleriesPage() {
       </section>
 
       {showSpinner ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
+        <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 6 }).map((_, i) => (
             <GalleryCardSkeleton key={i} />
           ))}
         </div>
       ) : showEmpty ? (
-        <div className="flex flex-col items-center rounded-2xl border border-dashed border-zinc-200 bg-gradient-to-b from-zinc-50/80 to-white px-6 py-16 text-center dark:border-zinc-800 dark:from-zinc-900/40 dark:to-zinc-950 sm:px-10">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-soft text-brand dark:bg-brand/25 dark:text-brand-on-dark">
-            <FolderOpen className="h-8 w-8" aria-hidden="true" />
-          </div>
-          <h2 className="mt-5 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            {trimmed || statusFilter !== "all" ? "No matches" : "Create your first gallery"}
+        <div className="rounded-xl border border-studio-line bg-white px-6 py-16 text-center">
+          <h2 className="text-sm font-medium text-studio-ink">
+            {trimmed || statusFilter !== "all" || clientFilter ? "No matches" : "No galleries yet"}
           </h2>
-          <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-studio-taupe">
             {trimmed
-              ? "Try another search, or clear the search box to see all galleries."
-              : statusFilter !== "all"
-                ? "No galleries match this status filter yet."
-              : "Galleries hold raws, client picks, and finals. Add one to get started."}
+              ? "Try another search, or clear the search box to see every gallery."
+              : clientFilter
+                ? `${clientNameById.get(clientFilter) ?? "This client"} does not have a gallery yet.`
+                : statusFilter !== "all"
+                  ? "No galleries match this status yet."
+                  : "Create a gallery to start sharing proofs."}
           </p>
           {!trimmed && statusFilter === "all" ? (
             <button
               type="button"
               onClick={openCreate}
-              className="mt-8 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/25 transition hover:bg-brand-hover"
+              className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-studio-ink px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-studio-charcoal"
             >
-              <Plus className="h-4 w-4" aria-hidden="true" />
+              <Plus className="h-3.5 w-3.5" aria-hidden />
               New gallery
             </button>
           ) : null}
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 xl:grid-cols-4">
           {visibleFolders.map((g) => (
             <FolderCard
               key={g._id}
@@ -302,5 +335,24 @@ export default function GalleriesPage() {
         onSaved={handleSaved}
       />
     </DashboardPage>
+  );
+}
+
+export default function GalleriesPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardPage className="space-y-5">
+          <div className="h-8 w-40 animate-pulse rounded-lg bg-[#EFE8DC]" />
+          <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <GalleryCardSkeleton key={i} />
+            ))}
+          </div>
+        </DashboardPage>
+      }
+    >
+      <GalleriesPageInner />
+    </Suspense>
   );
 }

@@ -227,7 +227,7 @@ export function DuplicateUploadConflictDialog({
           <button
             type="button"
             onClick={onReplace}
-            className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+            className="inline-flex min-h-[2.5rem] items-center justify-center rounded-xl bg-studio-ink px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal"
           >
             Replace existing
           </button>

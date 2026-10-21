@@ -21,12 +21,10 @@ import {
   Package,
   Pencil,
   PlayCircle,
-  Plus,
   Share2,
   Sparkles,
   Trash2,
   Upload,
-  User,
   Lock,
   RefreshCw,
   Unlock,
@@ -35,7 +33,14 @@ import { useToast } from "@/components/toast-provider";
 import { GalleryLightbox } from "@/components/gallery-lightbox";
 import { cn } from "@/lib/utils";
 import { CoverFocalPreview } from "@/components/photographer/cover-focal-preview";
-import { UploadDragger } from "@/components/photographer/upload-dragger";
+import {
+  DEFAULT_GALLERY_MARK,
+  GalleryMarkOverlay,
+  GalleryMarkPanel,
+  markFromApi,
+  type GalleryMark,
+} from "@/components/photographer/gallery-mark";
+import { GalleryMediaActions } from "@/components/photographer/gallery-media-actions";
 import {
   ReorderableMediaGrid,
 } from "@/components/photographer/reorderable-media-grid";
@@ -115,6 +120,19 @@ import {
 import { resolveFolderShareOrigin } from "@/lib/public-site-origin";
 import { getDuplicateUploadPreference } from "@/lib/upload-preferences";
 
+function sameGalleryMark(a: GalleryMark, b: GalleryMark) {
+  return (
+    a.enabled === b.enabled &&
+    a.src === b.src &&
+    a.name === b.name &&
+    a.position === b.position &&
+    a.size === b.size &&
+    a.opacity === b.opacity &&
+    a.inset === b.inset &&
+    a.plate === b.plate
+  );
+}
+
 function rawUploadFormOptions(
   duplicateAction: DuplicateUploadAction,
   setId?: string | null,
@@ -152,12 +170,19 @@ function AdminMediaPreview({
   name,
   isVideo,
   variant = "tile",
+  mark,
+  fit = "cover",
 }: {
   src: string;
   name: string;
   isVideo: boolean;
   variant?: "tile" | "lightbox";
+  mark?: GalleryMark | null;
+  /** `photo` keeps the real portrait or landscape frame and can carry the mark. */
+  fit?: "cover" | "photo";
 }) {
+  const showMark = Boolean(fit === "photo" && mark?.enabled && mark.src && !isVideo);
+
   if (isVideo) {
     return (
       <video
@@ -168,26 +193,47 @@ function AdminMediaPreview({
         preload="metadata"
         aria-label={name}
         className={
-          variant === "tile"
-            ? "pointer-events-none h-full w-full bg-black object-cover"
-            : "max-h-[calc(92vh-8rem)] max-w-full bg-black object-contain"
+          variant === "lightbox"
+            ? "max-h-[calc(92vh-8rem)] max-w-full bg-black object-contain"
+            : fit === "photo"
+              ? "pointer-events-none block aspect-video w-full bg-black object-cover"
+              : "pointer-events-none h-full w-full bg-black object-cover"
         }
       />
     );
   }
 
-  return (
+  const image = (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt={variant === "tile" ? "" : name}
       className={
-        variant === "tile"
-          ? "pointer-events-none h-full w-full object-cover"
-          : "max-h-[calc(92vh-8rem)] max-w-full object-contain"
+        variant === "lightbox"
+          ? "block max-h-[calc(92vh-8rem)] max-w-full object-contain"
+          : fit === "photo"
+            ? "pointer-events-none block h-auto w-full"
+            : "pointer-events-none h-full w-full object-cover"
       }
       loading={variant === "tile" ? "lazy" : undefined}
     />
+  );
+
+  if (fit !== "photo") {
+    return variant === "tile" ? <span className="relative block h-full w-full">{image}</span> : image;
+  }
+
+  return (
+    <span
+      className={
+        variant === "lightbox"
+          ? "relative inline-block max-h-[calc(92vh-8rem)] max-w-full"
+          : "relative block w-full"
+      }
+    >
+      {image}
+      {showMark && mark ? <GalleryMarkOverlay mark={mark} /> : null}
+    </span>
   );
 }
 
@@ -262,6 +308,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [lockFinalDeliveryAmount, setLockFinalDeliveryAmount] = useState("");
   const [lockingFinalDelivery, setLockingFinalDelivery] = useState(false);
   const [newSetName, setNewSetName] = useState("");
+  const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [creatingSet, setCreatingSet] = useState(false);
   const [editingSetId, setEditingSetId] = useState<string | null>(null);
   const [editingSetName, setEditingSetName] = useState("");
@@ -271,6 +318,82 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [selectionLimitUnlimited, setSelectionLimitUnlimited] = useState(true);
   const [selectionLimitInput, setSelectionLimitInput] = useState("20");
   const [selectionLimitSaving, setSelectionLimitSaving] = useState(false);
+  const [galleryMark, setGalleryMark] = useState<GalleryMark>(DEFAULT_GALLERY_MARK);
+  const [markSaving, setMarkSaving] = useState(false);
+  const logoFileRef = useRef<File | null>(null);
+  const removeLogoRef = useRef(false);
+  const skipSave = useRef(false);
+  const markHydrated = useRef(false);
+  const markSaveSeq = useRef(0);
+  const folderForMarkRef = useRef(folder);
+  folderForMarkRef.current = folder;
+
+  useEffect(() => {
+    const loaded = folderForMarkRef.current;
+    if (!loaded || loaded._id !== folderId) return;
+    const next = markFromApi(loaded.galleryMark);
+    markHydrated.current = true;
+    setGalleryMark((current) => {
+      if (sameGalleryMark(current, next)) return current;
+      skipSave.current = true;
+      return next;
+    });
+  }, [folder?._id, folderId]);
+
+  function onMarkChange(next: GalleryMark, file?: File | null) {
+    if (file) {
+      logoFileRef.current = file;
+      removeLogoRef.current = false;
+    } else if (!next.src) {
+      logoFileRef.current = null;
+      removeLogoRef.current = true;
+    }
+    setGalleryMark(next);
+  }
+
+  useEffect(() => {
+    if (!markHydrated.current) return;
+    if (skipSave.current) {
+      skipSave.current = false;
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      const seq = ++markSaveSeq.current;
+      const file = logoFileRef.current;
+      const removing = removeLogoRef.current;
+      setMarkSaving(true);
+      void updateFolder(folderId, {
+        galleryMark: {
+          enabled: galleryMark.enabled,
+          position: galleryMark.position,
+          size: galleryMark.size,
+          opacity: galleryMark.opacity,
+          inset: galleryMark.inset,
+          plate: galleryMark.plate,
+          ...(removing ? { src: "" } : {}),
+        },
+        galleryMarkLogo: file,
+      })
+        .then((updated) => {
+          if (seq !== markSaveSeq.current) return;
+          if (logoFileRef.current === file) logoFileRef.current = null;
+          if (removeLogoRef.current === removing) removeLogoRef.current = false;
+          // PUT returns the folder document, not the detail media lists.
+          setFolder((current) => (current ? { ...current, ...updated } : updated));
+        })
+        .catch((err) => {
+          if (seq !== markSaveSeq.current) return;
+          showToast(
+            err instanceof Error ? err.message : "Could not save the gallery mark.",
+            "error",
+          );
+        })
+        .finally(() => {
+          if (seq === markSaveSeq.current) setMarkSaving(false);
+        });
+    }, 600);
+    return () => window.clearTimeout(handle);
+  }, [galleryMark, folderId, showToast]);
 
   useEffect(() => {
     queueMicrotask(() => setOrigin(typeof window !== "undefined" ? window.location.origin : ""));
@@ -1561,6 +1684,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       const next = await createFolderSet(folder._id, name);
       setFolder(next.folder);
       setNewSetName("");
+      setCreateCollectionOpen(false);
       setActiveSetFilter(next.set._id);
       showToast(`Set "${next.set.name}" added.`, "success");
     } catch (e) {
@@ -1772,34 +1896,24 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     : 0;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-12">
-      {/* Breadcrumb */}
+    <div className="mx-auto max-w-6xl space-y-5 pb-16">
       <nav
-        className="flex flex-wrap items-center gap-1 text-xs text-zinc-500 dark:text-zinc-500"
+        className="flex flex-wrap items-center gap-1.5 text-[12px] text-studio-taupe"
         aria-label="Breadcrumb"
       >
-        <Link
-          href="/dashboard"
-          className="font-medium text-zinc-600 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-        >
-          Dashboard
+        <Link href="/dashboard" className="transition hover:text-studio-ink">
+          Studio
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden />
-        <Link
-          href="/dashboard/galleries"
-          className="font-medium text-zinc-600 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-        >
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#d5cdc2]" aria-hidden />
+        <Link href="/dashboard/galleries" className="transition hover:text-studio-ink">
           Galleries
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden />
-        <span className="max-w-[min(100%,16rem)] truncate font-medium text-zinc-800 dark:text-zinc-200">
-          {title}
-        </span>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#d5cdc2]" aria-hidden />
+        <span className="max-w-[min(100%,18rem)] truncate text-studio-ink">{title}</span>
       </nav>
 
-      {/* Background music player */}
       <div
-        className="relative overflow-hidden rounded-2xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm shadow-black/5 dark:border-zinc-700 dark:bg-zinc-950 dark:shadow-black/25"
+        className="relative overflow-hidden rounded-2xl border border-studio-line bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(26,22,18,0.04)]"
         role="group"
         aria-label="Background music for client gallery"
       >
@@ -1811,14 +1925,14 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           onChange={(ev) => void onBackgroundMusicFileChange(ev)}
         />
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand dark:bg-brand/20">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f6f3ee] text-studio-ink">
             <Music2 className="h-4 w-4" strokeWidth={2.25} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {folder.backgroundMusic ? folder.backgroundMusic : "No soundtrack selected"}
+            <p className="truncate text-sm font-medium text-studio-ink">
+              {folder.backgroundMusic ? folder.backgroundMusic : "No soundtrack yet"}
             </p>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Ambient gallery music</p>
+            <p className="text-[11px] text-studio-taupe">Plays while clients browse this gallery</p>
           </div>
           <div className="flex items-center gap-1.5">
             {folder.backgroundMusicUrl ? (
@@ -1878,14 +1992,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </div>
       </div>
 
-      {/* Hero */}
       <section
         className={cn(
-          "relative flex flex-col overflow-hidden rounded-2xl border border-zinc-200/60 bg-zinc-900 shadow-lg shadow-zinc-900/15 ring-1 ring-black/5 transition-[box-shadow,ring-color] duration-300 ease-out dark:border-zinc-800/80",
-          focalEditOpen &&
-            "shadow-xl shadow-black/25 ring-2 ring-brand/40 ring-offset-0 dark:ring-brand/45",
+          "relative flex flex-col overflow-hidden rounded-[1.35rem] bg-studio-ink shadow-[0_18px_50px_rgba(26,22,18,0.16)]",
+          focalEditOpen && "ring-2 ring-studio-gold/70",
         )}
       >
+        <div
+          className="pointer-events-none absolute inset-x-8 top-0 z-20 h-px bg-gradient-to-r from-transparent via-studio-gold to-transparent"
+          aria-hidden
+        />
         <div className="absolute inset-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -1901,77 +2017,103 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           />
           <div
             className={cn(
-              "absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/40 to-zinc-900/15 transition-opacity duration-300",
-              focalEditOpen && "from-zinc-950/[0.97] via-zinc-950/50",
+              "absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/20 transition-opacity duration-300",
+              focalEditOpen && "from-black/85 via-black/40",
             )}
             aria-hidden
           />
         </div>
 
-        <div className="relative z-10 flex min-h-[168px] flex-1 flex-col justify-between gap-3 p-5 md:min-h-[188px] md:gap-4 md:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="relative z-10 flex min-h-[280px] flex-1 flex-col justify-between gap-8 p-5 sm:p-7 md:min-h-[340px] md:p-8">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <Link
               href="/dashboard/galleries"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/12 px-2.5 py-1.5 text-[11px] font-semibold text-white ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-white/18 md:px-3 md:py-2 md:text-xs"
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white ring-1 ring-white/15 backdrop-blur-md transition hover:bg-white/18"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-              Back to galleries
+              Galleries
             </Link>
-            <div className="flex flex-wrap items-center justify-end gap-2 md:gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
+              {galleryMark.enabled && galleryMark.src ? (
+                <span className="inline-flex items-center rounded-full bg-studio-gold/90 px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] text-studio-ink uppercase">
+                  Mark on
+                </span>
+              ) : null}
               {folderStatus !== "COMPLETED" ? (
                 <button
                   type="button"
                   onClick={markCompleted}
                   disabled={busy}
-                  className="text-[10px] font-semibold text-white/75 underline decoration-white/25 underline-offset-2 transition hover:text-white hover:decoration-white/50 disabled:cursor-not-allowed disabled:opacity-40 md:text-[11px]"
+                  className="text-[12px] font-medium text-white/75 underline decoration-white/25 underline-offset-4 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Mark completed
                 </button>
               ) : null}
               <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider md:px-3 md:py-1 md:text-[11px] ${statusStyles(folderStatus)} ${focalEditOpen ? "opacity-90" : ""}`}
+                className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-semibold tracking-[0.16em] uppercase ${statusStyles(folderStatus)}`}
               >
                 {statusLabel(folderStatus)}
               </span>
             </div>
           </div>
 
-          <div className="max-w-2xl space-y-2 md:space-y-2.5">
-            <h1 className="text-xl font-semibold leading-snug tracking-tight text-white md:text-2xl">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-semibold tracking-[0.28em] text-studio-gold uppercase">
+              {title !== clientName ? clientName : "Gallery"}
+            </p>
+            <h1 className="font-display mt-2 text-[2.35rem] leading-[0.92] font-normal tracking-tight text-white sm:text-5xl md:text-[3.4rem]">
               {title}
             </h1>
-            <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-white/75 md:text-xs">
-              <span className="inline-flex items-center gap-1">
-                <User className="h-3 w-3 shrink-0 text-white/55" aria-hidden />
-                {clientName}
-              </span>
-              <span className="text-white/35" aria-hidden>
-                ·
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="h-3 w-3 shrink-0 text-white/55" aria-hidden />
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-white/75">
+              <span className="inline-flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 shrink-0 text-white/55" aria-hidden />
                 {eventDateLabel}
               </span>
+              {folder.description ? (
+                <span className="line-clamp-1 max-w-xl text-white/65">{folder.description}</span>
+              ) : null}
             </div>
-            {folder.description ? (
-              <p className="line-clamp-2 text-[11px] leading-relaxed text-white/65 md:text-xs">
-                {folder.description}
-              </p>
-            ) : null}
-            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTab("uploads")}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white ring-1 ring-white/15 backdrop-blur-md transition hover:bg-white/18"
+              >
+                <span className="tabular-nums">{rawAssets.length}</span>
+                <span className="ml-1.5 text-white/70">uploads</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("selection")}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white ring-1 ring-white/15 backdrop-blur-md transition hover:bg-white/18"
+              >
+                <span className="tabular-nums">{clientSelectedAssets.length}</span>
+                <span className="ml-1.5 text-white/70">picks</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("finals")}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[12px] font-medium text-white ring-1 ring-white/15 backdrop-blur-md transition hover:bg-white/18"
+              >
+                <span className="tabular-nums">{finalAssets.length}</span>
+                <span className="ml-1.5 text-white/70">finals</span>
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={pickCoverImage}
                 disabled={busy || savingFocal || uploadingCover}
-                aria-label="Upload cover image"
-                title="Upload cover image"
-                className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 md:size-9"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-[12px] font-medium text-studio-ink transition hover:bg-studio-cream disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {uploadingCover ? (
-                  <RefreshCw className="h-4 w-4 shrink-0 animate-spin opacity-90" aria-hidden />
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
-                  <ImagePlus className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                  <ImagePlus className="h-3.5 w-3.5" aria-hidden />
                 )}
+                Cover
               </button>
               <input
                 ref={coverFileInputRef}
@@ -1986,20 +2128,30 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 disabled={busy || savingFocal || uploadingCover}
                 aria-expanded={focalEditOpen}
                 aria-controls="folder-cover-framing-panel"
-                aria-label={focalEditOpen ? "Close cover framing editor" : "Cover framing"}
-                title={focalEditOpen ? "Close editor" : "Cover framing"}
                 className={cn(
-                  "inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white backdrop-blur-sm transition hover:bg-white/15 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 md:size-9",
-                  focalEditOpen
-                    ? "border-white/45 bg-white/18 ring-1 ring-white/25"
-                    : "",
+                  "inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-medium text-white ring-1 ring-white/25 backdrop-blur-md transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-50",
+                  focalEditOpen && "bg-white/15 ring-white/40",
                 )}
               >
                 {focalEditOpen ? (
-                  <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
+                  <ChevronUp className="h-3.5 w-3.5" aria-hidden />
                 ) : (
-                  <Focus className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                  <Focus className="h-3.5 w-3.5" aria-hidden />
                 )}
+                {focalEditOpen ? "Close framing" : "Frame cover"}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById("gallery-mark")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+                className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-medium text-white ring-1 ring-white/25 backdrop-blur-md transition hover:bg-white/12"
+              >
+                <ImageIcon className="h-3.5 w-3.5" aria-hidden />
+                Logo
               </button>
             </div>
           </div>
@@ -2057,13 +2209,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
         </div>
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem] lg:items-start">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
         <div className="space-y-4">
-          {/* Tabs */}
           <div
             role="tablist"
             aria-label="Gallery sections"
-            className="flex gap-1.5 rounded-2xl border border-zinc-200/80 bg-white p-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+            className="flex gap-1 rounded-2xl border border-studio-line bg-white p-1 shadow-[0_1px_2px_rgba(26,22,18,0.04)]"
           >
             {tabItems.map(({ key, label, icon: Icon, count }) => {
               const active = tab === key;
@@ -2075,16 +2226,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   aria-selected={active}
                   onClick={() => setTab(key)}
                   className={cn(
-                    "inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition",
+                    "inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium transition",
                     active
-                      ? "bg-brand/10 text-brand ring-1 ring-brand/20 dark:bg-brand/20 dark:text-brand-100"
-                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+                      ? "bg-studio-ink text-white shadow-sm"
+                      : "text-studio-taupe hover:bg-[#f6f3ee] hover:text-studio-ink",
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span className="truncate">{label}</span>
                   {count > 0 ? (
-                    <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-700 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-700">
+                    <span
+                      className={cn(
+                        "tabular-nums text-[11px]",
+                        active ? "text-white/70" : "text-studio-taupe",
+                      )}
+                    >
                       {count}
                     </span>
                   ) : null}
@@ -2093,10 +2249,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             })}
           </div>
 
-          <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          {folderSets.length > 0 ? (
+          <div className="rounded-2xl border border-studio-line bg-white p-3.5 shadow-[0_1px_2px_rgba(26,22,18,0.04)]">
             <div className="flex flex-wrap items-center gap-2">
-              {folderSets.length > 0 ? (
-                <>
                   {editingLabelKind === "all" ? (
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900">
                       <input
@@ -2118,7 +2273,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         onClick={() => void onSaveCollectionLabel()}
                         disabled={savingCollectionLabel}
-                        className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                        className="rounded-full bg-studio-ink px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-studio-charcoal disabled:opacity-45"
                       >
                         Save
                       </button>
@@ -2142,7 +2297,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         className={cn(
                           "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition",
                           activeSetFilter === "all"
-                            ? "bg-brand/10 text-brand ring-1 ring-brand/25 dark:bg-brand/20 dark:text-brand-100"
+                            ? "bg-studio-ink text-white ring-1 ring-studio-ink dark:bg-studio-ink dark:text-white"
                             : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                         )}
                         aria-pressed={activeSetFilter === "all"}
@@ -2204,7 +2359,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                                 type="button"
                                 onClick={() => void onSaveCollectionLabel()}
                                 disabled={savingCollectionLabel}
-                                className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                                className="rounded-full bg-studio-ink px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-studio-charcoal disabled:opacity-45"
                               >
                                 Save
                               </button>
@@ -2249,7 +2404,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                               className={cn(
                                 "inline-flex touch-none items-center rounded-full border px-3 py-1 text-xs font-medium transition",
                                 isActive
-                                  ? "border-brand/30 bg-brand/10 text-brand dark:border-brand/40 dark:bg-brand/20 dark:text-brand-100"
+                                  ? "border-studio-ink bg-studio-ink text-white dark:border-studio-ink dark:bg-studio-ink dark:text-white"
                                   : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                                 !reorderingCollections &&
                                   "cursor-grab active:cursor-grabbing",
@@ -2305,7 +2460,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                               savingSetId === activeSetItem._id ||
                               deletingSetId === activeSetItem._id
                             }
-                            className="rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-45"
+                            className="rounded-full bg-studio-ink px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-studio-charcoal disabled:opacity-45"
                           >
                             Save
                           </button>
@@ -2361,34 +2516,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                       )}
                     </div>
                   ) : null}
-                </>
-              ) : null}
-              <input
-                type="text"
-                value={newSetName}
-                disabled={creatingSet}
-                onChange={(e) => setNewSetName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void onCreateSet();
-                }}
-                placeholder="New collection"
-                aria-label="New set name"
-                className="min-w-[9rem] flex-1 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand/25 dark:border-zinc-700 dark:bg-zinc-950"
-              />
-              <button
-                type="button"
-                disabled={creatingSet || !newSetName.trim()}
-                onClick={() => void onCreateSet()}
-                className="inline-flex items-center justify-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-              >
-                {creatingSet ? <InlineActionSkeleton /> : <Plus className="h-3.5 w-3.5" aria-hidden />}
-                New Collection
-              </button>
             </div>
           </div>
+          ) : null}
 
           {/* Tab panels */}
-          <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-950 sm:p-6">
+          <div className="rounded-2xl border border-studio-line bg-white p-5 shadow-[0_1px_2px_rgba(26,22,18,0.04)] sm:p-6">
         {uploadProgress ? (
           <div className="mb-6">
             <UploadProgressBanner
@@ -2468,11 +2601,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 <span className="font-semibold">{generalSetLabel}</span> for uncategorized files.
               </p>
             ) : null}
-            <UploadDragger
-              label="Drop raw files here"
-              hint="Images (JPG, PNG, WebP, GIF) or video (MP4, MOV, WebM, etc.)."
-              accept="image/jpeg,image/png,image/webp,image/gif,video/*"
+            <GalleryMediaActions
               disabled={busy}
+              onCreateCollection={() => {
+                setNewSetName("");
+                setCreateCollectionOpen(true);
+              }}
               onFiles={(files) => void onRawUpload(files)}
             />
             {filteredRawAssets.length === 0 ? (
@@ -2482,7 +2616,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   No uploads yet
                 </p>
                 <p className="mt-1 max-w-sm text-xs text-zinc-500">
-                  Drop files above or click to browse. Thumbnails will appear in a grid below.
+                  Use Upload image above. Thumbnails will appear in a grid below.
                 </p>
               </div>
             ) : (
@@ -2593,7 +2727,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   className={cn(
                     "rounded-md px-2.5 py-1.5 text-xs font-semibold",
                     selectionLimitUnlimited
-                      ? "bg-brand text-white"
+                      ? "bg-studio-ink text-white"
                       : "bg-white text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
                   )}
                 >
@@ -2605,7 +2739,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   className={cn(
                     "rounded-md px-2.5 py-1.5 text-xs font-semibold",
                     !selectionLimitUnlimited
-                      ? "bg-brand text-white"
+                      ? "bg-studio-ink text-white"
                       : "bg-white text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
                   )}
                 >
@@ -2626,7 +2760,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   type="button"
                   disabled={!selectionLimitDirty || selectionLimitSaving}
                   onClick={() => void saveSelectionLimit()}
-                  className="ml-auto inline-flex items-center justify-center rounded-md bg-brand px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                  className="ml-auto inline-flex items-center justify-center rounded-md bg-studio-ink px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-studio-charcoal disabled:opacity-40"
                 >
                   {selectionLimitSaving ? "Saving…" : "Save"}
                 </button>
@@ -2764,7 +2898,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           setLockFinalDeliveryOpen(true);
                         }}
                         disabled={lockingFinalDelivery || unlockingFinals || busy || mediaDeleteBlocked()}
-                        className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-brand/25 transition hover:bg-brand-hover disabled:opacity-50 dark:hover:bg-brand-hover"
+                        className="inline-flex items-center gap-2 rounded-lg bg-studio-ink px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-studio-charcoal disabled:opacity-50"
                       >
                         <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden />
                         Lock images
@@ -2823,11 +2957,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 </div>
               ) : null}
             </div>
-            <UploadDragger
-              label="Drop edited finals here"
-              hint="Images (JPG, PNG, WebP, GIF) or video (MP4, MOV, WebM, etc.)."
-              accept="image/jpeg,image/png,image/webp,image/gif,video/*"
+            <GalleryMediaActions
               disabled={busy}
+              onCreateCollection={() => {
+                setNewSetName("");
+                setCreateCollectionOpen(true);
+              }}
               onFiles={(files) => void openFinalUploadWizard(files)}
             />
             {filteredFinalAssets.length === 0 ? (
@@ -2842,11 +2977,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 onOrderChange={(ordered) => void onMediaReorder("final", ordered)}
                 className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
                 renderOverlay={(f) => (
-                  <div className="relative aspect-square w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
+                  <div className="w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
                     <AdminMediaPreview
                       src={f.url}
                       name={f.name}
                       isVideo={isDemoFinalAssetVideo(f)}
+                      fit="photo"
+                      mark={galleryMark}
                     />
                   </div>
                 )}
@@ -2859,7 +2996,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                       isDragging && "opacity-35",
                     )}
                   >
-                    <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
+                    <div className="relative w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
                       <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
                         <input
                           type="checkbox"
@@ -2874,7 +3011,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         {...dragProps}
                         className={cn(
-                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
+                          "relative z-[1] block w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
                           !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
                         )}
                         onClick={() => openMediaPreview(f.id)}
@@ -2884,6 +3021,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           src={f.url}
                           name={f.name}
                           isVideo={isDemoFinalAssetVideo(f)}
+                          fit="photo"
+                          mark={galleryMark}
                         />
                         {isDemoFinalAssetVideo(f) ? (
                           <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
@@ -2929,10 +3068,18 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           </div>
         </div>
 
-        <aside className="space-y-4">
-          <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <aside className="space-y-4 lg:sticky lg:top-6">
+          <GalleryMarkPanel
+            coverSrc={coverSrc}
+            mark={galleryMark}
+            saving={markSaving}
+            onChange={onMarkChange}
+            onError={(message) => showToast(message, "error")}
+          />
+
+          <section className="rounded-2xl border border-studio-line bg-white p-4 shadow-[0_1px_2px_rgba(26,22,18,0.04)]">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Share Gallery</h2>
+              <h2 className="font-display text-[1.45rem] leading-none text-studio-ink">Share</h2>
               <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                 {shareActive ? "Published" : "Draft"}
               </span>
@@ -2978,8 +3125,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   className={cn(
                     "inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-semibold",
                     shareActive
-                      ? "bg-brand text-white hover:bg-brand-hover"
-                      : "pointer-events-none bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400",
+                      ? "bg-studio-ink text-white hover:bg-studio-charcoal"
+                      : "pointer-events-none bg-[#f3efe8] text-studio-taupe",
                   )}
                 >
                   Open Link
@@ -3010,16 +3157,16 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Gallery Status</h3>
+          <section className="rounded-2xl border border-studio-line bg-white p-4 shadow-[0_1px_2px_rgba(26,22,18,0.04)]">
+            <h3 className="font-display text-[1.45rem] leading-none text-studio-ink">At a glance</h3>
             <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+              <div className="flex items-center justify-between rounded-xl bg-[#f6f3ee] px-3 py-2">
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">Total files</span>
                 <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                   {totalMediaCount}
                 </span>
               </div>
-              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+              <div className="flex items-center justify-between rounded-xl bg-[#f6f3ee] px-3 py-2">
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">Client picks</span>
                 <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
                   {clientSelectedAssets.length}
@@ -3040,7 +3187,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   </div>
                 </div>
               ) : null}
-              <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-3 py-2 dark:bg-zinc-900">
+              <div className="flex items-center justify-between rounded-xl bg-[#f6f3ee] px-3 py-2">
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">Final delivery</span>
                 <span
                   className={cn(
@@ -3066,6 +3213,67 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
           </section>
         </aside>
       </div>
+
+      {createCollectionOpen ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-collection-title"
+          onClick={() => {
+            if (!creatingSet) setCreateCollectionOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="create-collection-title"
+              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              Create collection
+            </h2>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Name this set of photos. You can rename it later.
+            </p>
+            <label className="mt-4 block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Collection name
+              <input
+                type="text"
+                value={newSetName}
+                disabled={creatingSet}
+                autoFocus
+                onChange={(e) => setNewSetName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void onCreateSet();
+                  if (e.key === "Escape" && !creatingSet) setCreateCollectionOpen(false);
+                }}
+                placeholder="e.g. Ceremony"
+                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand/25 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900"
+              />
+            </label>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                disabled={creatingSet}
+                onClick={() => setCreateCollectionOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={creatingSet || !newSetName.trim()}
+                className="inline-flex items-center justify-center rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal disabled:opacity-50"
+                onClick={() => void onCreateSet()}
+              >
+                {creatingSet ? "Creating…" : "Create collection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {lockFinalDeliveryOpen ? (
         <div
@@ -3110,7 +3318,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               <button
                 type="button"
                 disabled={lockingFinalDelivery}
-                className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover disabled:opacity-50"
+                className="rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal disabled:opacity-50"
                 onClick={() => void onLockFinalDelivery()}
               >
                 {lockingFinalDelivery ? "Locking…" : "Lock images"}
@@ -3156,7 +3364,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   </button>
                   <button
                     type="button"
-                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+                    className="rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal"
                     onClick={() => {
                       setFinalWizardOpen(false);
                       void executeFinalUploadPipeline(finalWizardFiles, {
@@ -3203,7 +3411,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                   </button>
                   <button
                     type="button"
-                    className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+                    className="rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal"
                     onClick={() => {
                       const raw = finalWizardBalance.trim().replace(/,/g, "");
                       if (!raw || Number.isNaN(Number(raw))) {
@@ -3261,6 +3469,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
             name={lbItem.name}
             isVideo={lbItem.isVideo}
             variant="lightbox"
+            fit="photo"
+            mark={tab === "finals" ? galleryMark : null}
           />
         </GalleryLightbox>
       ) : null}

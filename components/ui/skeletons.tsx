@@ -6,24 +6,16 @@ import { cn } from "@/lib/utils";
 const darkSkeleton =
   "[&_.ant-skeleton-content_.ant-skeleton-title]:rounded-md [&_.ant-skeleton-content_.ant-skeleton-paragraph>li]:rounded-md dark:[&_.ant-skeleton-content_.ant-skeleton-title]:!bg-zinc-700 dark:[&_.ant-skeleton-content_.ant-skeleton-paragraph>li]:!bg-zinc-700";
 
-/** Gallery card placeholder (dashboard + galleries grid). */
+/** Gallery card placeholder (galleries grid). */
 export function GalleryCardSkeleton({ className }: { className?: string }) {
   return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950",
-        darkSkeleton,
-        className,
-      )}
-    >
-      <div className="aspect-[4/3] w-full overflow-hidden">
-        <Skeleton.Image
-          active
-          className="!flex !h-full !min-h-[100px] !w-full !items-center !justify-center !rounded-none"
-        />
-      </div>
-      <div className="px-3 py-2.5">
-        <Skeleton active title={{ width: "68%" }} paragraph={{ rows: 1, width: "45%" }} />
+    <div className={cn(className)} aria-hidden>
+      <div className="aspect-[3/4] animate-pulse rounded-[22px] bg-[#E6DDD0]" />
+      <div className="relative z-10 -mt-11 mx-3.5 rounded-2xl border border-white/70 bg-white px-4 py-3.5 shadow-[0_14px_34px_rgba(26,22,18,0.06)]">
+        <div className="h-2.5 w-16 animate-pulse rounded bg-[#EFE8DC]" />
+        <div className="mt-3 h-6 w-3/4 animate-pulse rounded bg-[#EFE8DC]" />
+        <div className="mt-4 h-px bg-[#E6DDD0]" />
+        <div className="mt-2.5 h-3 w-1/2 animate-pulse rounded bg-[#EFE8DC]" />
       </div>
     </div>
   );
@@ -44,7 +36,7 @@ export function FolderDetailPageSkeleton() {
     <div className={cn("mx-auto w-full max-w-[1600px] space-y-6", darkSkeleton)}>
       <Skeleton active title={{ width: 220 }} paragraph={false} />
       <div className="overflow-hidden rounded-2xl border border-zinc-200/80 dark:border-zinc-800">
-        <Skeleton.Image active className="!h-[200px] !w-full md:!h-[240px]" />
+        <Skeleton.Image active className="!h-[280px] !w-full md:!h-[340px]" />
       </div>
       <Skeleton active title={false} paragraph={{ rows: 1, width: "100%", style: { height: 160 } }} />
       <Skeleton active title={false} paragraph={{ rows: 1, width: "100%", style: { height: 56 } }} />

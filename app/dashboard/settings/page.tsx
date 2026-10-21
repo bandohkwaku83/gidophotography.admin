@@ -37,7 +37,7 @@ function Toggle({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={`relative h-7 w-12 rounded-full transition disabled:opacity-50 ${
-          checked ? "bg-brand" : "bg-zinc-300 dark:bg-zinc-700"
+          checked ? "bg-studio-ink" : "bg-zinc-300 dark:bg-zinc-700"
         }`}
       >
         <span
@@ -216,7 +216,7 @@ export default function SettingsPage() {
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label
-                  className={`inline-flex cursor-pointer items-center rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-hover ${
+                  className={`inline-flex cursor-pointer items-center rounded-lg bg-studio-ink px-3 py-2 text-xs font-semibold text-white transition hover:bg-studio-charcoal ${
                     uploadingCover ? "pointer-events-none opacity-60" : ""
                   }`}
                 >
@@ -255,7 +255,7 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={() => void signOut()}
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            className="rounded-xl bg-studio-burgundy px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#541624]"
           >
             Sign out
           </button>

@@ -653,6 +653,24 @@ export async function updateFolder(
     input.coverImage,
   );
 
+  if (input.galleryMark) {
+    fd.append(
+      "galleryMark",
+      JSON.stringify({
+        enabled: input.galleryMark.enabled,
+        position: input.galleryMark.position,
+        size: input.galleryMark.size,
+        opacity: input.galleryMark.opacity,
+        inset: input.galleryMark.inset,
+        plate: input.galleryMark.plate,
+        ...(input.galleryMark.src === "" ? { src: "" } : {}),
+      }),
+    );
+  }
+  if (input.galleryMarkLogo) {
+    fd.append("galleryMarkLogo", input.galleryMarkLogo);
+  }
+
   const res = await authedFetch(`/api/folders/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: fd,

@@ -10,6 +10,7 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
+  --font-display: var(--font-newsreader), "Iowan Old Style", "Palatino Linotype", Palatino, serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -46,6 +47,21 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Gido palette — ink, ivory, champagne, burgundy */
+  --color-studio-ivory: #f3efe8;
+  --color-studio-sidebar: #d9d9d9;
+  --color-studio-canvas: #ffffff;
+  --color-studio-cream: #fbf8f3;
+  --color-studio-card: #fffcf8;
+  --color-studio-ink: #1a1612;
+  --color-studio-charcoal: #2c2824;
+  --color-studio-gold: #c6a15b;
+  --color-studio-gold-deep: #a68546;
+  --color-studio-burgundy: #6b1e2f;
+  --color-studio-rose: #c4a4a4;
+  --color-studio-taupe: #8c7b6b;
+  --color-studio-sage: #6e8b74;
+  --color-studio-line: #e6ddd0;
   /* Studio accent — Tailwind indigo-600 family (login, shell, modals, dashboard) */
   --color-brand: #4f46e5;
   --color-brand-hover: #4338ca;
@@ -54,6 +70,34 @@
   --color-brand-soft: #eef2ff;
   --color-brand-ink: #3730a3;
   --color-brand-muted: #e0e7ff;
+  --animate-shell-enter: shell-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes shell-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shell-enter,
+  .animate-pop-in {
+    animation: none;
+  }
 }
 
 :root {
@@ -191,4 +235,8 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.animate-pop-in {
+  animation: pop-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

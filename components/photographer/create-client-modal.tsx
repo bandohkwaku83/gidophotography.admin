@@ -193,7 +193,7 @@ export function CreateClientModal({ open, onClose, client, onSaved }: Props) {
             disabled={busy}
             onClick={submit}
             aria-busy={busy}
-            className="rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/40"
+            className="rounded-xl bg-studio-ink px-4 py-2 text-sm font-medium text-white transition hover:bg-studio-charcoal disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-studio-ink/30"
           >
             {busy
               ? isEdit

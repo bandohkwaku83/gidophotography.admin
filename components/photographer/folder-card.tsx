@@ -1,39 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import {
   apiFolderStatusToUi,
+  folderCoverObjectPositionStyle,
   getFolderClientName,
   getFolderCoverUrl,
-  folderCoverObjectPositionStyle,
   type ApiFolder,
 } from "@/lib/folders-api";
 import { cn } from "@/lib/utils";
 
-const FALLBACK_COVER = "https://picsum.photos/seed/gido-cover/1200/800";
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function statusPill(folder: ApiFolder) {
+function formatShootDate(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "—";
+  return `${d.getUTCDate()} ${SHORT_MONTHS[d.getUTCMonth()]}`;
+}
+
+function statusMeta(folder: ApiFolder): { label: string; dot: string; text: string } {
   const s = apiFolderStatusToUi(folder.status);
   if (s === "COMPLETED") {
-    return (
-      <span className="rounded-md bg-emerald-500/95 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
-        Done
-      </span>
-    );
+    return { label: "Delivered", dot: "bg-studio-sage", text: "text-[#3E5C46]" };
   }
   if (s === "SELECTION_PENDING") {
-    return (
-      <span className="rounded-md bg-amber-500/95 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
-        Selecting
-      </span>
-    );
+    return { label: "Selecting", dot: "bg-studio-gold", text: "text-[#8A6A2F]" };
   }
-  return (
-    <span className="rounded-md border border-white/30 bg-black/35 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-white backdrop-blur-sm">
-      Draft
-    </span>
-  );
+  return { label: "Draft", dot: "bg-studio-taupe", text: "text-studio-taupe" };
 }
 
 export function FolderCard({
@@ -50,104 +45,97 @@ export function FolderCard({
   busy?: boolean;
 }) {
   const clientName = getFolderClientName(folder, clientNameById);
-  const cover = getFolderCoverUrl(folder) ?? FALLBACK_COVER;
-  const created = folder.createdAt
-    ? new Date(folder.createdAt).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
-    : "—";
-
-  const eventTitle = folder.eventName?.trim() || clientName;
-  const subline = folder.eventName?.trim() ? clientName : folder.description || "—";
+  const cover = getFolderCoverUrl(folder);
+  const title = folder.eventName?.trim() || "Untitled gallery";
+  const shoot = formatShootDate(folder.eventDate || folder.createdAt || "");
+  const frames = folder.totalRawMediaCount;
+  const status = statusMeta(folder);
 
   return (
-    <article
-      className={cn(
-        "group relative flex flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-zinc-900/[0.02] transition-all duration-200",
-        "hover:-translate-y-0.5 hover:border-zinc-300/80 hover:shadow-[0_8px_24px_-8px_rgba(0,0,0,0.12)] hover:ring-zinc-900/[0.05]",
-        "dark:border-zinc-800/80 dark:bg-zinc-950 dark:ring-white/[0.03] dark:hover:border-zinc-700 dark:hover:shadow-[0_8px_28px_-8px_rgba(0,0,0,0.45)]",
-        busy && "pointer-events-none opacity-60",
-      )}
-    >
+    <article className={cn("group", busy && "pointer-events-none opacity-60")}>
       <div className="relative">
         <Link
           href={`/dashboard/folder/${folder._id}`}
-          className="relative block aspect-[4/3] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/50"
+          aria-label={`Open gallery ${title}`}
+          className="relative block overflow-hidden rounded-[22px] bg-[#e6ddd0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-studio-ink/30"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={cover}
-            alt=""
-            className="h-full w-full object-cover transition duration-500 ease-out group-hover:scale-[1.04]"
-            style={folderCoverObjectPositionStyle(folder)}
-          />
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-zinc-950/50 via-zinc-950/5 to-transparent opacity-70 transition-opacity duration-200 group-hover:opacity-90" />
+          <div className="relative aspect-[3/4]">
+            {cover ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={cover}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover transition duration-700 ease-out group-hover:scale-[1.04]"
+                style={folderCoverObjectPositionStyle(folder)}
+              />
+            ) : (
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,#f8f3ea,transparent_42%),linear-gradient(165deg,#cfc3b0_0%,#efe6d8_46%,#b7ab9a_100%)]" />
+            )}
+            <span className="pointer-events-none absolute top-3.5 left-3.5 h-3.5 w-3.5 border-t border-l border-white/90 drop-shadow-[0_1px_1px_rgba(26,22,18,0.45)]" />
+            <span className="pointer-events-none absolute top-3.5 right-3.5 h-3.5 w-3.5 border-t border-r border-white/90 drop-shadow-[0_1px_1px_rgba(26,22,18,0.45)]" />
+            <span className="pointer-events-none absolute bottom-16 left-3.5 h-3.5 w-3.5 border-b border-l border-white/90 drop-shadow-[0_1px_1px_rgba(26,22,18,0.45)]" />
+            <span className="pointer-events-none absolute right-3.5 bottom-16 h-3.5 w-3.5 border-r border-b border-white/90 drop-shadow-[0_1px_1px_rgba(26,22,18,0.45)]" />
+          </div>
         </Link>
 
-        <div className="pointer-events-none absolute left-2.5 top-2.5 z-10">
-          <span className="pointer-events-auto">{statusPill(folder)}</span>
-        </div>
-
-        <div className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-zinc-600 opacity-0 shadow-sm backdrop-blur-sm transition-all duration-200 group-hover:opacity-100 dark:bg-zinc-900/90 dark:text-zinc-200">
-          <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-        </div>
-
-        {(onEdit || onDelete) ? (
-          <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1 opacity-0 transition-all duration-200 group-hover:opacity-100">
+        {onEdit || onDelete ? (
+          <div className="absolute top-12 right-3 z-10 flex flex-col items-center gap-1 sm:opacity-0 sm:transition sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
             {onEdit ? (
               <button
                 type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-zinc-700 shadow-sm backdrop-blur-sm transition hover:bg-white dark:bg-zinc-900/90 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-studio-ink shadow-sm backdrop-blur-sm transition hover:bg-white"
                 aria-label="Edit gallery"
                 title="Edit"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onEdit(folder);
-                }}
+                onClick={() => onEdit(folder)}
               >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                <Pencil className="h-3.5 w-3.5" aria-hidden />
               </button>
             ) : null}
-
             {onDelete ? (
               <button
                 type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-red-50 dark:bg-zinc-900/90 dark:text-red-400 dark:hover:bg-red-950/60"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-studio-burgundy shadow-sm backdrop-blur-sm transition hover:bg-[#F3E4E4]"
                 aria-label="Move gallery to trash"
                 title="Move to trash"
                 disabled={busy}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
+                onClick={() => {
                   if (busy) return;
-                  if (!window.confirm(`Move gallery "${eventTitle}" to trash? You can restore it from Trash before the deadline.`)) return;
+                  if (
+                    !window.confirm(
+                      `Move gallery "${title}" to trash? You can restore it from Trash before the deadline.`,
+                    )
+                  ) {
+                    return;
+                  }
                   void onDelete(folder);
                 }}
               >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>
             ) : null}
           </div>
         ) : null}
       </div>
 
-      <div className="flex flex-1 flex-col px-3 py-2.5">
+      <div className="relative z-10 -mt-11 mx-3.5 rounded-2xl border border-white/70 bg-white/95 px-4 py-3.5 shadow-[0_14px_34px_rgba(26,22,18,0.1)] backdrop-blur-md transition duration-300 group-hover:-translate-y-0.5">
         <Link
           href={`/dashboard/folder/${folder._id}`}
-          className="block min-w-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950"
+          className="block min-w-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-studio-ink/25"
         >
-          <div className="flex items-start justify-between gap-2">
-            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
-              {eventTitle}
-            </h2>
-            <span className="shrink-0 text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500">
-              {created}
-            </span>
+          <p className={cn("flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase", status.text)}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} aria-hidden />
+            {status.label}
+          </p>
+          <h2 className="font-display mt-1 line-clamp-2 text-[1.2rem] leading-tight tracking-tight text-studio-ink">
+            {title}
+          </h2>
+          <div className="mt-3 flex items-end justify-between gap-3 border-t border-studio-line pt-2.5">
+            <p className="min-w-0 truncate text-[13px] text-studio-charcoal">{clientName}</p>
+            <p className="shrink-0 text-[11px] tracking-[0.14em] text-studio-taupe uppercase">
+              {shoot}
+              {typeof frames === "number" && frames > 0 ? ` · ${frames} photos` : ""}
+            </p>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">{subline}</p>
         </Link>
       </div>
     </article>

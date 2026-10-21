@@ -3,6 +3,28 @@ import { HttpError } from "@/lib/http";
 
 export type { DuplicateUploadAction } from "@/lib/upload-preferences";
 
+export type GalleryMarkPosition =
+  | "top-left"
+  | "top-center"
+  | "top-right"
+  | "middle-left"
+  | "center"
+  | "middle-right"
+  | "bottom-left"
+  | "bottom-center"
+  | "bottom-right";
+
+export type ApiGalleryMark = {
+  enabled: boolean;
+  position: GalleryMarkPosition;
+  size: number;
+  opacity: number;
+  inset: number;
+  plate: boolean;
+  name: string;
+  logoUrl: string;
+};
+
 export type ApiFolderShare = {
   enabled?: boolean;
   code?: string;
@@ -170,6 +192,8 @@ export type ApiFolder = {
   updatedAt?: string;
   /** When set, folder is in trash (soft-delete). */
   deletedAt?: string | null;
+  /** Logo stamped onto the client copy of each final. Admin `url` stays clean. */
+  galleryMark?: ApiGalleryMark;
 };
 
 export type ListFoldersResponse = {
@@ -202,6 +226,17 @@ export type UpdateFolderInput = {
   backgroundMusicEnabled?: boolean;
   allMediaLabel?: string;
   generalSetLabel?: string;
+  galleryMark?: {
+    enabled: boolean;
+    position: GalleryMarkPosition;
+    size: number;
+    opacity: number;
+    inset: number;
+    plate: boolean;
+    /** Send "" only when the photographer removes the logo. */
+    src?: "";
+  };
+  galleryMarkLogo?: File | null;
 };
 
 /** Response when moving a gallery to trash (`DELETE /api/folders/:id`). */

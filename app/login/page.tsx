@@ -1,11 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { setAuthSession, type AuthUser } from "@/lib/auth-demo";
 import { apiUrl } from "@/lib/api";
+import { STUDIO_ADDRESS, STUDIO_LOGO_SRC, STUDIO_TAGLINE } from "@/lib/branding";
 
 type LoginResponse = {
   message?: string;
@@ -13,10 +13,14 @@ type LoginResponse = {
   user: AuthUser;
 };
 
+const fieldClass =
+  "mt-2 w-full rounded-lg border border-[#e6e6e6] bg-white px-3.5 py-3 text-[15px] text-black outline-none transition placeholder:text-[#b5b5b5] focus:border-black disabled:opacity-60";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +81,6 @@ export default function LoginPage() {
         body = null;
       }
 
-
       if (!res.ok) {
         const message =
           body && typeof body === "object" && "message" in body && typeof (body as { message: unknown }).message === "string"
@@ -131,7 +134,6 @@ export default function LoginPage() {
         body = null;
       }
 
-
       if (!res.ok) {
         const message =
           (body && typeof body === "object" && "message" in body && typeof (body as { message: unknown }).message === "string"
@@ -167,157 +169,178 @@ export default function LoginPage() {
     }
   }
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") submit();
-  }
-
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#F5F5F5] px-4 py-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(245,245,245,0.8),transparent_45%),radial-gradient(circle_at_85%_20%,_rgba(245,245,245,0.6),transparent_40%),radial-gradient(circle_at_10%_80%,_rgba(245,245,245,0.5),transparent_35%)] blur-2xl" />
-      <div className="relative mx-auto grid w-full max-w-5xl overflow-hidden rounded-3xl border border-white/15 bg-white/10 shadow-2xl shadow-black/30 backdrop-blur-xl lg:grid-cols-2">
-        <section className="hidden border-r border-white/10 bg-black lg:flex lg:items-center">
+    <div className="min-h-screen bg-[#f5f5f5] text-black lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
+      <aside className="relative hidden min-h-screen overflow-hidden bg-black lg:block">
+        <Image
+          src="/images/GIDO98297.JPG"
+          alt="Studio portrait"
+          fill
+          priority
+          className="object-cover object-[center_20%]"
+          sizes="58vw"
+        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/20" />
+        <div className="absolute inset-x-0 bottom-0 p-10 text-white">
+          <p className="font-display text-[34px] leading-none italic">{STUDIO_TAGLINE}</p>
+          <p className="mt-4 text-[11px] tracking-[0.22em] text-white/75 uppercase">{STUDIO_ADDRESS}</p>
+        </div>
+      </aside>
+
+      <main className="flex min-h-screen flex-col">
+        <div className="relative h-52 overflow-hidden bg-black sm:h-64 lg:hidden">
           <Image
             src="/images/GIDO98297.JPG"
-            alt="Photographer session"
-            width={1600}
-            height={1067}
+            alt=""
+            fill
             priority
-            className="h-auto w-full object-contain"
-            sizes="(min-width: 1024px) 50vw, 100vw"
+            className="object-cover object-[center_18%]"
+            sizes="100vw"
           />
-        </section>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+        </div>
 
-        <section className="bg-white/95 p-7 sm:p-10 dark:bg-zinc-950/95">
-          <div className="mx-auto w-full max-w-md">
-            <div className="flex items-center justify-between">
-              <Link
-                href="/"
-                className="text-sm font-medium text-zinc-500 transition hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100 lg:hidden"
-              >
-                ← Home
-              </Link>
-              <p className="flex items-center text-xs font-medium uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
-                <Image
-                  src="/images/gido_logo.png"
-                  alt="Gido logo"
-                  width={154}
-                  height={154}
-                  // className="h-16 w-16 rounded object-contain"
-                />
-              </p>
-            </div>
+        <div className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10">
+          <div className="w-full max-w-[380px]">
+            <Image
+              src={STUDIO_LOGO_SRC}
+              alt="Gido Photography"
+              width={640}
+              height={160}
+              priority
+              className="object-contain object-left"
+              style={{ width: "auto", height: "34px" }}
+            />
 
-            <h2 className="mt-6 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <h1 className="font-display mt-10 text-[40px] leading-none font-normal tracking-tight">
               Welcome back
-            </h2>
+            </h1>
+            <p className="mt-3 text-sm text-[#6f6f6f]">Sign in to your studio.</p>
 
-            <div className="mt-8 space-y-4">
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+            <form
+              className="mt-9"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submit();
+              }}
+            >
+              <label className="block text-[13px] font-medium text-black">
                 Email
                 <input
                   type="email"
                   autoComplete="email"
-                  className="mt-1.5 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition ring-brand/35 placeholder:text-zinc-400 focus:border-brand-on-dark focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900 dark:ring-brand/40"
+                  className={fieldClass}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={onKeyDown}
                   disabled={submitting}
-                  placeholder="doe@gmail.com"
+                  placeholder="you@studio.com"
                 />
               </label>
 
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                Password
+              <div className="mt-5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="login-password" className="text-[13px] font-medium text-black">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    className="text-[12px] font-medium text-[#6f6f6f] transition hover:text-black"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-controls="login-password"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  id="login-password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
-                  className="mt-1.5 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition ring-brand/35 placeholder:text-zinc-400 focus:border-brand-on-dark focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900 dark:ring-brand/40"
+                  className={fieldClass}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={onKeyDown}
                   disabled={submitting}
                   placeholder="••••••••"
                 />
-              </label>
+              </div>
 
               {error ? (
                 <div
                   role="alert"
-                  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                  className="mt-5 rounded-lg border border-[#e7c8c8] bg-[#fdf6f6] px-3.5 py-3 text-sm text-[#6b1e2f]"
                 >
                   {error}
                 </div>
               ) : null}
 
-              <div className="mt-6 flex items-center justify-between gap-8 text-sm">
-                <label className="flex cursor-pointer items-center gap-2 text-zinc-600 dark:text-zinc-300">
+              <div className="mt-5 flex items-center justify-between gap-4 text-[13px]">
+                <label className="flex cursor-pointer items-center gap-2 text-[#3a3a3a]">
                   <input
                     type="checkbox"
                     checked={remember}
                     onChange={(e) => setRemember(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 text-brand focus:ring-brand"
+                    className="h-4 w-4 rounded border-[#d0d0d0] accent-black"
                   />
                   Remember me
                 </label>
                 <button
                   type="button"
                   onClick={openForgot}
-                  className="font-medium text-brand-hover underline-offset-4 transition hover:underline dark:text-brand-on-dark"
+                  className="text-black underline decoration-[#d0d0d0] underline-offset-4 transition hover:decoration-black"
                 >
                   Forgot password?
                 </button>
               </div>
 
               <button
-                type="button"
-                onClick={submit}
+                type="submit"
                 disabled={submitting}
                 aria-busy={submitting}
-                className="mt-8 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-brand to-sky-500 py-3 text-sm font-semibold text-white shadow-lg shadow-brand/30 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                className="mt-8 flex h-11 w-full items-center justify-center rounded-lg bg-black text-sm font-medium text-white transition hover:bg-[#222] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {submitting ? "Logging in…" : "Log in"}
+                {submitting ? "Signing in…" : "Sign in"}
               </button>
-            </div>
+            </form>
           </div>
-        </section>
-      </div>
+        </div>
+      </main>
 
       {forgotOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4"
           onClick={closeForgot}
         >
           <div
-            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-password-title"
+            className="w-full max-w-sm rounded-2xl bg-[#f5f5f5] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.18)]"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+            <h2 id="reset-password-title" className="font-display text-[28px] leading-none">
               Reset password
-            </h3>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Enter your email and a new password.
-            </p>
+            </h2>
+            <p className="mt-2 text-sm text-[#6f6f6f]">Enter your email and a new password.</p>
 
-            <div className="mt-4 space-y-3">
-              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-200">
+            <div className="mt-6 space-y-4">
+              <label className="block text-[13px] font-medium text-black">
                 Email
                 <input
                   type="email"
                   autoComplete="email"
-                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition ring-brand/35 placeholder:text-zinc-400 focus:border-brand-on-dark focus:ring-2 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900"
+                  className={fieldClass}
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
                   disabled={forgotSubmitting}
-                  placeholder="doe@gmail.com"
+                  placeholder="you@studio.com"
                 />
               </label>
 
-              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-200">
+              <label className="block text-[13px] font-medium text-black">
                 New password
                 <input
                   type="password"
                   autoComplete="new-password"
-                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition ring-brand/35 placeholder:text-zinc-400 focus:border-brand-on-dark focus:ring-2 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900"
+                  className={fieldClass}
                   value={forgotNewPassword}
                   onChange={(e) => setForgotNewPassword(e.target.value)}
                   disabled={forgotSubmitting}
@@ -325,12 +348,12 @@ export default function LoginPage() {
                 />
               </label>
 
-              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-200">
+              <label className="block text-[13px] font-medium text-black">
                 Confirm password
                 <input
                   type="password"
                   autoComplete="new-password"
-                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition ring-brand/35 placeholder:text-zinc-400 focus:border-brand-on-dark focus:ring-2 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900"
+                  className={fieldClass}
                   value={forgotConfirmPassword}
                   onChange={(e) => setForgotConfirmPassword(e.target.value)}
                   disabled={forgotSubmitting}
@@ -341,7 +364,7 @@ export default function LoginPage() {
               {forgotError ? (
                 <div
                   role="alert"
-                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                  className="rounded-lg border border-[#e7c8c8] bg-[#fdf6f6] px-3.5 py-3 text-sm text-[#6b1e2f]"
                 >
                   {forgotError}
                 </div>
@@ -350,19 +373,19 @@ export default function LoginPage() {
               {forgotSuccess ? (
                 <div
                   role="status"
-                  className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  className="rounded-lg border border-[#c9dccb] bg-[#f3f8f4] px-3.5 py-3 text-sm text-[#245338]"
                 >
                   {forgotSuccess}
                 </div>
               ) : null}
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={closeForgot}
                 disabled={forgotSubmitting}
-                className="rounded-xl border border-zinc-200 px-3 py-2 text-sm font-semibold hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                className="rounded-lg px-3.5 py-2.5 text-sm font-medium text-black transition hover:bg-black/5 disabled:opacity-60"
               >
                 {forgotSuccess ? "Close" : "Cancel"}
               </button>
@@ -372,7 +395,7 @@ export default function LoginPage() {
                   onClick={submitForgot}
                   disabled={forgotSubmitting}
                   aria-busy={forgotSubmitting}
-                  className="rounded-xl bg-gradient-to-r from-brand to-sky-500 px-3 py-2 text-sm font-semibold text-white shadow hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="rounded-lg bg-black px-3.5 py-2.5 text-sm font-medium text-white transition hover:bg-[#222] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {forgotSubmitting ? "Updating…" : "Update password"}
                 </button>

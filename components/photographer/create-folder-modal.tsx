@@ -273,7 +273,7 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
       >
         <div className="shrink-0 border-b border-zinc-100 bg-gradient-to-br from-brand-soft/90 to-white px-6 py-5 dark:border-zinc-800 dark:from-brand/25 dark:to-zinc-950">
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand text-white shadow-md shadow-brand/25">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-studio-ink text-white">
               <FolderPlus className="h-5 w-5" aria-hidden />
             </div>
             <div>
@@ -492,7 +492,7 @@ export function CreateFolderModal({ open, onClose, folder, onSaved }: Props) {
             disabled={busy}
             onClick={submit}
             aria-busy={busy}
-            className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/25 transition hover:bg-brand-hover disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 dark:focus:ring-offset-zinc-950"
+            className="rounded-xl bg-studio-ink px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-studio-ink focus:ring-offset-2 dark:focus:ring-offset-zinc-950"
           >
             {busy ? (isEdit ? "Saving…" : "Creating…") : isEdit ? "Save changes" : "Create folder"}
           </button>

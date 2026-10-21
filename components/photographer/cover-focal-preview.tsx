@@ -152,7 +152,7 @@ export function CoverFocalPreview({
               "text-xs font-semibold transition-colors duration-200 hover:underline disabled:opacity-40",
               embeddedDark
                 ? "text-white/75 hover:text-white"
-                : "text-brand dark:text-brand-on-dark",
+                : "text-studio-ink",
             )}
           >
             Reset to center
@@ -171,7 +171,7 @@ export function CoverFocalPreview({
             type="button"
             disabled={disabled}
             onClick={() => onFocalChange(50, 50)}
-            className="w-fit text-xs font-semibold text-brand transition-colors hover:underline disabled:opacity-40 dark:text-brand-on-dark"
+            className="w-fit text-xs font-semibold text-studio-ink transition-colors hover:underline disabled:opacity-40"
           >
             Reset framing
           </button>

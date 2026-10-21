@@ -383,7 +383,7 @@ export function NewBookingModal({
               <button
                 type="submit"
                 disabled={!clientId || clientsLoading || submitting}
-                className="rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {submitting ? "Saving…" : bookingToEdit ? "Save changes" : "Save booking"}
               </button>

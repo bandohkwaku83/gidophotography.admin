@@ -135,9 +135,9 @@ export function NotificationsBell() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50",
-          "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800",
-          open && "ring-2 ring-brand/35 dark:ring-brand/40",
+          "relative inline-flex h-9 w-9 items-center justify-center rounded-full text-stone-600 transition hover:bg-white/80",
+          "dark:text-zinc-200 dark:hover:bg-zinc-900",
+          open && "bg-white text-stone-900 shadow-sm ring-1 ring-stone-200 dark:bg-zinc-900 dark:ring-zinc-700",
         )}
         aria-label="Notifications"
         aria-expanded={open}
@@ -145,7 +145,7 @@ export function NotificationsBell() {
       >
         <Bell className="h-4 w-4" aria-hidden />
         {unreadCount > 0 ? (
-          <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-sm">
+          <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-[#6B1E2F] px-1 text-[10px] font-bold text-white shadow-sm">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         ) : null}
@@ -165,7 +165,7 @@ export function NotificationsBell() {
                   type="button"
                   onClick={() => void onMarkAllRead()}
                   disabled={markingAll}
-                  className="rounded-lg px-2 py-1 text-xs font-semibold text-brand-ink hover:bg-brand/10 disabled:opacity-50 dark:text-brand-on-dark dark:hover:bg-brand/15"
+                  className="rounded-lg px-2 py-1 text-xs font-semibold text-studio-ink hover:bg-[#f5f5f5] disabled:opacity-50"
                 >
                   {markingAll ? "…" : "Mark all read"}
                 </button>
@@ -202,7 +202,7 @@ export function NotificationsBell() {
                         onClick={() => void onRowActivate(n)}
                         className={cn(
                           "flex w-full flex-col gap-0.5 px-4 py-3 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-900/80",
-                          unread && "bg-blue-50/80 dark:bg-blue-950/25",
+                          unread && "bg-[#F7F1E4] dark:bg-zinc-900",
                         )}
                       >
                         <span className="flex items-start justify-between gap-2">

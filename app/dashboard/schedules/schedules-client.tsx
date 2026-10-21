@@ -415,7 +415,7 @@ export function SchedulesClient() {
             setBookingToEdit(null);
             setBookingModalOpen(true);
           }}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-hover"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-studio-charcoal"
         >
           <Plus className="h-4 w-4" aria-hidden />
           New booking
@@ -434,7 +434,7 @@ export function SchedulesClient() {
               className={cn(
                 "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
                 active
-                  ? "border-brand bg-brand/10 text-brand-ink ring-2 ring-brand/25 dark:text-brand-on-dark"
+                  ? "border-studio-ink bg-studio-ink text-white ring-2 ring-studio-ink/20"
                   : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800",
               )}
             >
@@ -512,7 +512,7 @@ export function SchedulesClient() {
                   onClick={() => setSelectedDay(day)}
                   className={cn(
                     "flex min-h-[5.5rem] flex-col items-stretch border border-transparent bg-white p-1.5 text-left transition hover:bg-zinc-50 dark:bg-zinc-950 dark:hover:bg-zinc-900/80",
-                    selected && "ring-2 ring-inset ring-brand dark:ring-brand-on-dark",
+                    selected && "ring-2 ring-inset ring-studio-ink",
                     todayCell && !selected && "ring-1 ring-inset ring-zinc-300 dark:ring-zinc-600",
                   )}
                 >
@@ -520,7 +520,7 @@ export function SchedulesClient() {
                     className={cn(
                       "flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold",
                       todayCell
-                        ? "bg-brand text-white dark:bg-brand-on-dark dark:text-zinc-950"
+                        ? "bg-studio-ink text-white"
                         : "text-zinc-800 dark:text-zinc-100",
                     )}
                   >
@@ -617,7 +617,7 @@ export function SchedulesClient() {
                               setBookingToEdit(s);
                               setBookingModalOpen(true);
                             }}
-                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-brand dark:hover:bg-zinc-950 dark:hover:text-brand-on-dark"
+                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-studio-ink dark:hover:bg-zinc-950"
                             aria-label={`Edit ${s.title}`}
                           >
                             <Pencil className="h-3.5 w-3.5" aria-hidden />
@@ -627,7 +627,7 @@ export function SchedulesClient() {
                             onClick={() => {
                               router.push(`/dashboard/invoices?booking=${encodeURIComponent(s.id)}`);
                             }}
-                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-brand dark:hover:bg-zinc-950 dark:hover:text-brand-on-dark"
+                            className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-white hover:text-studio-ink dark:hover:bg-zinc-950"
                             aria-label={`Generate invoice for ${s.title}`}
                             title="Generate invoice"
                           >

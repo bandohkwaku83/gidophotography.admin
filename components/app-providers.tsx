@@ -13,7 +13,9 @@ export function DashboardAntdProviders({ children }: { children: React.ReactNode
       <ConfigProvider
         theme={{
           token: {
-            colorPrimary: "#2563eb",
+            colorPrimary: "#1a1612",
+            colorPrimaryHover: "#2c2824",
+            colorPrimaryActive: "#14110e",
             borderRadius: 10,
             fontFamily: "var(--font-sans), system-ui, sans-serif",
           },

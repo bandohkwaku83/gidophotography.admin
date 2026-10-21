@@ -220,7 +220,7 @@ function LineItemsEditor({
       <button
         type="button"
         onClick={() => onChange([...items, { description: "", quantity: 1, unitPriceGHS: 0 }])}
-        className="mt-1 inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold text-brand transition hover:bg-brand/5 dark:text-brand-on-dark dark:hover:bg-brand/10"
+        className="mt-1 inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold text-studio-ink transition hover:bg-[#f5f5f5]"
       >
         <Plus className="h-3.5 w-3.5" />
         Add item
@@ -773,7 +773,7 @@ export default function InvoicesPage() {
                 </p>
                 <Link
                   href="/dashboard/schedules"
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand transition hover:text-brand-hover dark:text-brand-on-dark dark:hover:text-white"
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-studio-ink transition hover:underline"
                 >
                   Show all advance bookings
                   <ArrowRight className="h-3 w-3" aria-hidden="true" />
@@ -815,7 +815,7 @@ export default function InvoicesPage() {
                   <button
                     type="button"
                     onClick={() => setAddClientOpen(true)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-600 transition hover:text-brand dark:text-zinc-400 dark:hover:text-brand-on-dark"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-600 transition hover:text-studio-ink dark:text-zinc-400"
                   >
                     <UserPlus className="h-3.5 w-3.5" aria-hidden />
                     Add client

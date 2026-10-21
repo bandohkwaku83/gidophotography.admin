@@ -1,10 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { STUDIO_LOGO_SRC } from "@/lib/branding";
 import { getAuthToken } from "@/lib/auth-demo";
-import { cn } from "@/lib/utils";
 
 /** App Router paths; must match real `app/` routes (use pathname shape Next resolves). */
 const PRIORITY_ROUTES = [
@@ -99,15 +100,30 @@ export function AppBootstrap({ children }: { children: ReactNode }) {
   if (showSplash) {
     return (
       <div
-        className={cn(
-          "fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-4",
-          "bg-zinc-950 text-white",
-        )}
+        className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white px-6"
         aria-busy="true"
         aria-live="polite"
+        role="status"
       >
-        <Loader2 className="h-10 w-10 animate-spin text-brand-on-dark opacity-90" aria-hidden />
-        <p className="text-sm font-medium text-zinc-300">Loading studio…</p>
+        <div className="flex max-w-sm flex-col items-center gap-7 text-center">
+          <Image
+            src={STUDIO_LOGO_SRC}
+            alt="Gido Photography"
+            width={640}
+            height={160}
+            className="h-9 w-auto object-contain"
+            priority
+          />
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-studio-gold" aria-hidden />
+            <div>
+              <p className="font-display text-xl tracking-tight text-studio-ink">Loading studio</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-studio-taupe">
+                Opening your workspace…
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

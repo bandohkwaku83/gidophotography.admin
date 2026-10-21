@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Libre_Franklin, Geist_Mono } from "next/font/google";
+import { Libre_Franklin, Geist_Mono, Newsreader } from "next/font/google";
 import { AppBootstrap } from "@/components/app-bootstrap";
 import { ToastProvider } from "@/components/toast-provider";
 import "./globals.css";
@@ -12,6 +12,12 @@ const libreSans = Libre_Franklin({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+const newsreader = Newsreader({
+  variable: "--font-newsreader",
+  subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {
@@ -30,7 +36,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${libreSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${libreSans.variable} ${geistMono.variable} ${newsreader.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <ToastProvider>
