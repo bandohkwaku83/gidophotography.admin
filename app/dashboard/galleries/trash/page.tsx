@@ -31,6 +31,26 @@ function trashMediaKey(row: TrashMediaRow): string {
   return `${row.folderId}:${row.mediaId}`;
 }
 
+function describeTrashSelection(folders: number, files: number): string {
+  const parts: string[] = [];
+  if (folders > 0) parts.push(`${folders} ${folders === 1 ? "gallery" : "galleries"}`);
+  if (files > 0) parts.push(`${files} ${files === 1 ? "file" : "files"}`);
+  return parts.join(" and ");
+}
+
+async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  if (items.length === 0) return;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export default function GalleriesTrashPage() {
   const { showToast } = useToast();
   const router = useRouter();
@@ -44,11 +64,13 @@ export default function GalleriesTrashPage() {
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [restoringMediaKey, setRestoringMediaKey] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
-  /** Gallery folder ids selected for permanent purge (`folder._id`). */
+  const [restoringSelected, setRestoringSelected] = useState(false);
+  /** Gallery folder ids checked in the list (`folder._id`). */
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
-  /** Keys `folderId:mediaId` for file-level trash selected for purge. */
+  /** Keys `folderId:mediaId` for checked file-level trash rows. */
   const [selectedMediaKeys, setSelectedMediaKeys] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"galleries" | "files">("galleries");
+  const [deletePrompt, setDeletePrompt] = useState<null | "all" | "selected">(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,6 +134,8 @@ export default function GalleriesTrashPage() {
   }, [data, extraMediaRows]);
 
   const selectedCount = selectedFolderIds.length + selectedMediaKeys.length;
+  const actionsBusy =
+    purging || restoringSelected || restoringId !== null || restoringMediaKey !== null;
 
   const allFoldersSelected = useMemo(() => {
     if (!data?.folders.length) return false;
@@ -278,17 +302,118 @@ export default function GalleriesTrashPage() {
     }
   }
 
-  function clearPurgeSelection() {
+  function clearSelection() {
     setSelectedFolderIds([]);
     setSelectedMediaKeys([]);
   }
 
-  async function onPurgeAllTrash() {
-    if (purging || !data) return;
-    const confirmed = window.confirm(
-      "Permanently delete everything in trash?\n\nThis cannot be undone. All trashed galleries and files are removed from the server immediately. The restore window does not apply.\n\nOnly choose OK if you are certain.",
+  async function onRestoreSelected() {
+    if (actionsBusy || !data) return;
+    const folderRows = data.folders.filter(
+      (row) =>
+        selectedFolderIds.includes(row.folder._id) && !isRestoreDeadlinePassed(row.restoreBefore),
     );
-    if (!confirmed) return;
+    const mediaRows = allTrashedMedia.filter(
+      (row) =>
+        selectedMediaKeys.includes(trashMediaKey(row)) && !isRestoreDeadlinePassed(row.restoreBefore),
+    );
+    const expiredSkipped =
+      data.folders.filter(
+        (row) =>
+          selectedFolderIds.includes(row.folder._id) && isRestoreDeadlinePassed(row.restoreBefore),
+      ).length +
+      allTrashedMedia.filter(
+        (row) =>
+          selectedMediaKeys.includes(trashMediaKey(row)) && isRestoreDeadlinePassed(row.restoreBefore),
+      ).length;
+
+    if (folderRows.length === 0 && mediaRows.length === 0) {
+      showToast(
+        expiredSkipped > 0
+          ? "Those items are past the restore deadline and cannot be restored."
+          : "Select at least one item to restore.",
+        "error",
+      );
+      return;
+    }
+
+    setRestoringSelected(true);
+    const restoredFolderIds = new Set<string>();
+    const restoredMediaKeys = new Set<string>();
+    let failed = 0;
+    let saw410 = false;
+
+    try {
+      await mapPool(
+        [
+          ...folderRows.map((row) => ({ kind: "folder" as const, row })),
+          ...mediaRows.map((row) => ({ kind: "media" as const, row })),
+        ],
+        4,
+        async (item) => {
+          try {
+            if (item.kind === "folder") {
+              await restoreFolderFromTrash(item.row.folder._id);
+              restoredFolderIds.add(item.row.folder._id);
+            } else {
+              await restoreFolderTrashedMedia(item.row.folderId, item.row.mediaId);
+              restoredMediaKeys.add(trashMediaKey(item.row));
+            }
+          } catch (e) {
+            failed += 1;
+            if (e instanceof FoldersApiError && e.status === 410) saw410 = true;
+          }
+        },
+      );
+
+      if (restoredFolderIds.size > 0 || restoredMediaKeys.size > 0) {
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                folders: prev.folders.filter((f) => !restoredFolderIds.has(f.folder._id)),
+                count: Math.max(0, prev.count - restoredFolderIds.size),
+                deletedMedia: prev.deletedMedia.filter((m) => !restoredMediaKeys.has(trashMediaKey(m))),
+                deletedMediaTotal: Math.max(0, prev.deletedMediaTotal - restoredMediaKeys.size),
+              }
+            : prev,
+        );
+        setExtraMediaRows((prev) => prev.filter((m) => !restoredMediaKeys.has(trashMediaKey(m))));
+        setSelectedFolderIds((prev) => prev.filter((id) => !restoredFolderIds.has(id)));
+        setSelectedMediaKeys((prev) => prev.filter((key) => !restoredMediaKeys.has(key)));
+      }
+
+      const restoredBits: string[] = [];
+      if (restoredFolderIds.size > 0) {
+        restoredBits.push(
+          `${restoredFolderIds.size} ${restoredFolderIds.size === 1 ? "gallery" : "galleries"}`,
+        );
+      }
+      if (restoredMediaKeys.size > 0) {
+        restoredBits.push(
+          `${restoredMediaKeys.size} ${restoredMediaKeys.size === 1 ? "file" : "files"}`,
+        );
+      }
+
+      if (restoredBits.length === 0) {
+        showToast("Could not restore the selected items.", "error");
+      } else {
+        let msg = `Restored ${restoredBits.join(" and ")}.`;
+        if (failed > 0) msg += ` ${failed} could not be restored.`;
+        if (expiredSkipped > 0) {
+          msg += ` ${expiredSkipped} past the deadline ${expiredSkipped === 1 ? "was" : "were"} left in trash.`;
+        }
+        showToast(msg, failed > 0 || expiredSkipped > 0 ? "info" : "success");
+      }
+
+      if (saw410) void load();
+    } finally {
+      setRestoringSelected(false);
+    }
+  }
+
+  async function runPurgeAll() {
+    if (purging || !data) return;
     setPurging(true);
     try {
       const result = await purgeFoldersTrash({ all: true });
@@ -300,7 +425,7 @@ export default function GalleriesTrashPage() {
         msg += ` ${result.skipped.length} item(s) skipped.`;
       }
       showToast(msg, result.skipped?.length ? "info" : "success");
-      clearPurgeSelection();
+      clearSelection();
       await load();
     } catch (e) {
       showToast(
@@ -316,15 +441,11 @@ export default function GalleriesTrashPage() {
     }
   }
 
-  async function onPurgeSelectedTrash() {
+  async function runPurgeSelected() {
     if (purging) return;
     const nFolders = selectedFolderIds.length;
     const nMedia = selectedMediaKeys.length;
     if (nFolders === 0 && nMedia === 0) return;
-    const confirmed = window.confirm(
-      `Permanently delete ${nFolders} gallery/galleries and ${nMedia} file(s)?\n\nThis cannot be undone. These items are removed from the server immediately.`,
-    );
-    if (!confirmed) return;
     setPurging(true);
     try {
       const mediaIds = selectedMediaKeys.map((key) => {
@@ -344,7 +465,7 @@ export default function GalleriesTrashPage() {
         msg += ` ${result.skipped.length} skipped.${first ? ` (${first})` : ""}`;
       }
       showToast(msg, result.skipped?.length ? "info" : "success");
-      clearPurgeSelection();
+      clearSelection();
       await load();
     } catch (e) {
       showToast(
@@ -359,6 +480,22 @@ export default function GalleriesTrashPage() {
       setPurging(false);
     }
   }
+
+  async function onConfirmDelete() {
+    if (!deletePrompt || purging) return;
+    if (deletePrompt === "all") await runPurgeAll();
+    else await runPurgeSelected();
+    setDeletePrompt(null);
+  }
+
+  useEffect(() => {
+    if (!deletePrompt || purging) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setDeletePrompt(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deletePrompt, purging]);
 
   const hasFolderTrash = (data?.folders.length ?? 0) > 0;
   const hasMediaTrash = (data?.deletedMediaTotal ?? 0) > 0;
@@ -419,36 +556,56 @@ export default function GalleriesTrashPage() {
 
             {data && !fullyEmpty ? (
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                {selectedCount > 0 ? (
+                  <button
+                    type="button"
+                    disabled={actionsBusy}
+                    onClick={() => void onRestoreSelected()}
+                    className={cn(
+                      "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl bg-studio-ink px-3.5 py-2 text-xs font-semibold text-white transition",
+                      "hover:bg-studio-charcoal disabled:cursor-not-allowed disabled:opacity-45",
+                    )}
+                  >
+                    {restoringSelected ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {restoringSelected ? "Restoring…" : `Restore selected (${selectedCount})`}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  disabled={purging || restoringId !== null || restoringMediaKey !== null}
-                  onClick={() => void onPurgeAllTrash()}
+                  disabled={actionsBusy}
+                  onClick={() => setDeletePrompt("all")}
                   className={cn(
                     "inline-flex min-h-9 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-800 transition",
                     "hover:bg-red-100 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-100 dark:hover:bg-red-950/70",
                     "disabled:cursor-not-allowed disabled:opacity-45",
                   )}
                 >
-                  {purging ? "Purging…" : "Empty trash"}
+                  {purging && deletePrompt === "all" ? "Deleting…" : "Empty trash"}
                 </button>
                 {selectedCount > 0 ? (
                   <>
                     <button
                       type="button"
-                      disabled={purging || restoringId !== null || restoringMediaKey !== null}
-                      onClick={() => void onPurgeSelectedTrash()}
+                      disabled={actionsBusy}
+                      onClick={() => setDeletePrompt("selected")}
                       className={cn(
                         "inline-flex min-h-9 items-center justify-center rounded-xl border border-red-300/90 bg-white px-3.5 py-2 text-xs font-semibold text-red-800 transition",
                         "hover:bg-red-50 dark:border-red-800/60 dark:bg-zinc-900 dark:text-red-200 dark:hover:bg-red-950/35",
                         "disabled:cursor-not-allowed disabled:opacity-45",
                       )}
                     >
-                      Purge selected ({selectedCount})
+                      {purging && deletePrompt === "selected"
+                        ? "Deleting…"
+                        : `Delete selected (${selectedCount})`}
                     </button>
                     <button
                       type="button"
-                      disabled={purging}
-                      onClick={clearPurgeSelection}
+                      disabled={actionsBusy}
+                      onClick={clearSelection}
                       className="inline-flex min-h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 disabled:opacity-45"
                     >
                       Clear
@@ -463,7 +620,7 @@ export default function GalleriesTrashPage() {
 
       {selectedCount > 0 ? (
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Selected items are permanently deleted — they cannot be recovered.
+          {selectedCount} selected. Restore them together, or permanently delete them.
         </p>
       ) : null}
 
@@ -558,7 +715,7 @@ export default function GalleriesTrashPage() {
                 </p>
                 <button
                   type="button"
-                  disabled={purging || data.folders.length === 0}
+                  disabled={actionsBusy || data.folders.length === 0}
                   onClick={toggleSelectAllFolders}
                   className="text-xs font-semibold text-studio-ink hover:underline disabled:opacity-40"
                 >
@@ -600,10 +757,10 @@ export default function GalleriesTrashPage() {
                             <input
                               type="checkbox"
                               checked={checked}
-                              disabled={purging}
+                              disabled={actionsBusy}
                               onChange={() => toggleFolderForPurge(folder._id)}
                               className="h-3.5 w-3.5 rounded border-zinc-300 text-brand focus:ring-brand"
-                              aria-label={`Select for permanent deletion: ${title}`}
+                              aria-label={`Select ${title}`}
                             />
                           </td>
                           <td className="px-3 py-2.5 sm:px-4">
@@ -642,11 +799,11 @@ export default function GalleriesTrashPage() {
                           <td className="px-3 py-2.5 text-right sm:px-4">
                             <button
                               type="button"
-                              disabled={expired || busy || purging}
+                              disabled={expired || busy || actionsBusy}
                               onClick={() => void onRestore(row)}
                               className={cn(
                                 "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                                expired || busy || purging
+                                expired || busy || actionsBusy
                                   ? "cursor-not-allowed text-zinc-400 dark:text-zinc-600"
                                   : "bg-studio-ink text-white hover:bg-studio-charcoal",
                               )}
@@ -678,7 +835,7 @@ export default function GalleriesTrashPage() {
                 </div>
                 <button
                   type="button"
-                  disabled={purging || allTrashedMedia.length === 0}
+                  disabled={actionsBusy || allTrashedMedia.length === 0}
                   onClick={toggleSelectAllMedia}
                   className="text-xs font-semibold text-studio-ink hover:underline disabled:opacity-40"
                 >
@@ -753,10 +910,10 @@ export default function GalleriesTrashPage() {
                             <input
                               type="checkbox"
                               checked={mediaChecked}
-                              disabled={purging}
+                              disabled={actionsBusy}
                               onChange={() => toggleMediaKeyForPurge(mkey)}
                               className="h-3 w-3 rounded border-zinc-300 text-brand focus:ring-brand"
-                              aria-label={`Select for permanent deletion: ${label}`}
+                              aria-label={`Select ${label}`}
                             />
                           </label>
 
@@ -776,11 +933,11 @@ export default function GalleriesTrashPage() {
                             ) : null}
                             <button
                               type="button"
-                              disabled={expired || busy || purging}
+                              disabled={expired || busy || actionsBusy}
                               onClick={() => void onRestoreMedia(row)}
                               className={cn(
                                 "mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded-md py-1 text-[10px] font-semibold transition",
-                                expired || busy || purging
+                                expired || busy || actionsBusy
                                   ? "cursor-not-allowed bg-white/20 text-white/50"
                                   : "bg-white text-zinc-900 hover:bg-zinc-100",
                               )}
@@ -803,7 +960,7 @@ export default function GalleriesTrashPage() {
                   <div className="mt-3 flex justify-center">
                     <button
                       type="button"
-                      disabled={mediaLoadingMore || purging}
+                      disabled={mediaLoadingMore || actionsBusy}
                       onClick={() => void loadMoreMedia()}
                       className={cn(
                         "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-700 transition hover:border-studio-ink hover:bg-[#f5f5f5] hover:text-studio-ink",
@@ -824,6 +981,52 @@ export default function GalleriesTrashPage() {
               </div>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {deletePrompt ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="trash-delete-title"
+          aria-describedby="trash-delete-body"
+          onClick={() => {
+            if (!purging) setDeletePrompt(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-950"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="trash-delete-title" className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              {deletePrompt === "all" ? "Empty trash?" : "Delete selected items?"}
+            </h2>
+            <p id="trash-delete-body" className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {deletePrompt === "all"
+                ? "Permanently delete everything in trash? This cannot be undone. Galleries and files are removed immediately."
+                : `Permanently delete ${describeTrashSelection(selectedFolderIds.length, selectedMediaKeys.length) || "the selected items"}? This cannot be undone.`}
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                autoFocus
+                disabled={purging}
+                onClick={() => setDeletePrompt(null)}
+                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                disabled={purging}
+                onClick={() => void onConfirmDelete()}
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-45"
+              >
+                {purging ? "Deleting…" : "Yes"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </DashboardPage>
