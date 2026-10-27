@@ -1,19 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Plus, Search, X } from "lucide-react";
 import { DashboardPage } from "@/components/photographer/dashboard-page";
 import { FolderCard } from "@/components/photographer/folder-card";
+import { ReorderableGalleryGrid } from "@/components/photographer/reorderable-gallery-grid";
 import { useFolderListSearch } from "@/components/photographer/photographer-shell";
 import { CreateFolderModal } from "@/components/photographer/create-folder-modal";
 import { useToast } from "@/components/toast-provider";
+import {
+  applyStoredGalleryOrder,
+  applyVisibleGalleryOrder,
+  readGalleryOrder,
+  writeGalleryOrder,
+} from "@/lib/gallery-card-order";
 import { cn } from "@/lib/utils";
 import {
   apiFolderStatusToUi,
   deleteFolder,
   listFolders,
+  reorderFolders,
   FoldersApiError,
   formatRestoreBeforeLabel,
   type ApiFolder,
@@ -49,6 +57,12 @@ function GalleriesPageInner() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ApiFolder | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const foldersRef = useRef(folders);
+  const saveSeq = useRef(0);
+  const orderApiMissing = useRef(false);
+  const selectionAnchorId = useRef<string | null>(null);
+  foldersRef.current = folders;
 
   const fetchFolders = useCallback(
     async (search: string, clientId: string, signal?: AbortSignal) => {
@@ -60,7 +74,7 @@ function GalleriesPageInner() {
           clientId: clientId || undefined,
         });
         if (signal?.aborted) return;
-        setFolders(list);
+        setFolders(applyStoredGalleryOrder(list, readGalleryOrder()));
       } catch (err) {
         if (signal?.aborted) return;
         setError(err instanceof Error ? err.message : "Failed to load folders.");
@@ -143,10 +157,94 @@ function GalleriesPageInner() {
         : folders.filter((folder) => apiFolderStatusToUi(folder.status) === statusFilter),
     [folders, statusFilter],
   );
+  const visibleFoldersRef = useRef(visibleFolders);
+  visibleFoldersRef.current = visibleFolders;
+
+  const trimmed = useMemo(() => query.trim(), [query]);
+  const arrangeLocked = Boolean(trimmed || clientFilter);
+  const arrangeNote = clientFilter
+    ? "Show all galleries to rearrange them."
+    : trimmed
+      ? "Clear the search to rearrange galleries."
+      : "Drag a card to a new spot. Select several, then drag one of them to move the group.";
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setSelectedIds(new Set());
+      selectionAnchorId.current = null;
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const toggleSelect = useCallback((folder: ApiFolder, shiftKey: boolean) => {
+    setSelectedIds((prev) => {
+      const visible = visibleFoldersRef.current;
+      if (shiftKey && selectionAnchorId.current) {
+        const ids = visible.map((item) => item._id);
+        const start = ids.indexOf(selectionAnchorId.current);
+        const end = ids.indexOf(folder._id);
+        if (start >= 0 && end >= 0) {
+          const [from, to] = start < end ? [start, end] : [end, start];
+          const next = new Set(prev);
+          for (let index = from; index <= to; index += 1) {
+            const id = ids[index];
+            if (id) next.add(id);
+          }
+          return next;
+        }
+      }
+      const next = new Set(prev);
+      if (next.has(folder._id)) next.delete(folder._id);
+      else next.add(folder._id);
+      return next;
+    });
+    selectionAnchorId.current = folder._id;
+  }, []);
+
+  const handleReorder = useCallback(
+    (visibleNext: ApiFolder[]) => {
+      const next = applyVisibleGalleryOrder(foldersRef.current, visibleNext);
+      foldersRef.current = next;
+      setFolders(next);
+      const ids = next.map((folder) => folder._id);
+      writeGalleryOrder(ids);
+      if (orderApiMissing.current) return;
+      const seq = ++saveSeq.current;
+      void reorderFolders(ids)
+        .then(() => {
+          if (seq !== saveSeq.current) return;
+          showToast("Gallery order saved.", "success");
+        })
+        .catch((err: unknown) => {
+          if (seq !== saveSeq.current) return;
+          if (
+            err instanceof FoldersApiError &&
+            (err.status === 404 || err.status === 405 || err.status === 501)
+          ) {
+            orderApiMissing.current = true;
+            showToast(
+              "Arrangement is saved in this browser. Restart the API server so it syncs to other devices.",
+              "info",
+            );
+            return;
+          }
+          showToast(
+            err instanceof FoldersApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : "Could not save gallery order.",
+            "error",
+          );
+        });
+    },
+    [showToast],
+  );
 
   const showEmpty = !loading && visibleFolders.length === 0;
   const showSpinner = loading && folders.length === 0;
-  const trimmed = useMemo(() => query.trim(), [query]);
 
   const statusCounts = useMemo(() => {
     let draft = 0;
@@ -306,20 +404,58 @@ function GalleriesPageInner() {
           ) : null}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 xl:grid-cols-4">
-          {visibleFolders.map((g) => (
-            <FolderCard
-              key={g._id}
-              folder={g}
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[13px] text-studio-taupe">{arrangeNote}</p>
+            {!arrangeLocked && selectedIds.size > 0 ? (
+              <div className="flex items-center gap-2 text-[13px]">
+                <span className="font-medium text-studio-ink">
+                  {selectedIds.size} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds(new Set());
+                    selectionAnchorId.current = null;
+                  }}
+                  className="rounded-lg bg-[#f5f5f5] px-2.5 py-1 text-[12px] font-medium text-studio-ink transition hover:bg-[#ececec]"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {arrangeLocked ? (
+            <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 xl:grid-cols-4">
+              {visibleFolders.map((g) => (
+                <FolderCard
+                  key={g._id}
+                  folder={g}
+                  clientNameById={clientNameById}
+                  busy={pendingDeleteId === g._id}
+                  onEdit={(f) => {
+                    setEditing(f);
+                    setCreateOpen(true);
+                  }}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          ) : (
+            <ReorderableGalleryGrid
+              folders={visibleFolders}
+              selectedIds={selectedIds}
               clientNameById={clientNameById}
-              busy={pendingDeleteId === g._id}
-              onEdit={(f) => {
-                setEditing(f);
+              pendingDeleteId={pendingDeleteId}
+              onToggleSelect={toggleSelect}
+              onReorder={handleReorder}
+              onEdit={(folder) => {
+                setEditing(folder);
                 setCreateOpen(true);
               }}
               onDelete={handleDelete}
             />
-          ))}
+          )}
         </div>
       )}
 

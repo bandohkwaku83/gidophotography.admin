@@ -47,7 +47,19 @@ export function extractFolderSets(folder: ApiFolder): ApiFolderSet[] {
       typeof (row as { _id?: unknown })._id === "string" &&
       typeof (row as { name?: unknown }).name === "string",
   );
-  return [...sets].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  return [...sets]
+    .map((row) => {
+      const o = row as ApiFolderSet & Record<string, unknown>;
+      const locked = o.locked === true || o.isLocked === true || o.is_locked === true;
+      const accessRaw = o.accessCode ?? o.access_code;
+      const accessCode = typeof accessRaw === "string" ? accessRaw.trim() : "";
+      return {
+        ...row,
+        ...(locked ? { locked: true as const } : {}),
+        ...(accessCode ? { accessCode } : {}),
+      };
+    })
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
 /** Sentinel for the uncategorized bucket in collection reorder APIs. */

@@ -20,6 +20,7 @@ import {
   FoldersApiError,
   type FolderMoveToTrashResult,
   type FolderMediaReorderResult,
+  type FolderReorderResult,
   type ListFoldersResponse,
   type ListFoldersTrashResponse,
   type ListFoldersMediaTrashParams,
@@ -561,6 +562,33 @@ export async function listFolders(params: {
   if (Array.isArray(body)) return body as ApiFolder[];
   const data = body as ListFoldersResponse | null;
   return Array.isArray(data?.folders) ? data!.folders : [];
+}
+
+/** Persist the galleries-page order. `PATCH /api/folders/reorder` */
+export async function reorderFolders(orderedIds: string[]): Promise<FolderReorderResult> {
+  const res = await authedFetch("/api/folders/reorder", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderedIds }),
+  });
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new FoldersApiError(
+      extractMessage(body, `Failed to save gallery order (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+  const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const updatedRaw = payload.updatedCount ?? payload.updated_count;
+  const updatedCount =
+    typeof updatedRaw === "number" && Number.isFinite(updatedRaw)
+      ? Math.max(0, Math.floor(updatedRaw))
+      : orderedIds.length;
+  return {
+    message: extractMessage(body, "Gallery order saved."),
+    updatedCount,
+  };
 }
 
 export async function getFolder(id: string): Promise<ApiFolder> {
@@ -1399,12 +1427,19 @@ function mergeSetsIntoFolder(folder: ApiFolder, body: unknown): ApiFolder {
   };
 }
 
+function readSetFlag(v: unknown): boolean {
+  return v === true || v === 1 || v === "1" || v === "true";
+}
+
 function normalizeFolderSet(row: unknown): ApiFolderSet | null {
   if (!row || typeof row !== "object") return null;
   const o = row as Record<string, unknown>;
-  const id = typeof o._id === "string" ? o._id.trim() : "";
+  const id = typeof o._id === "string" ? o._id.trim() : typeof o.id === "string" ? o.id.trim() : "";
   const name = typeof o.name === "string" ? o.name.trim() : "";
   if (!id || !name) return null;
+  const accessRaw = o.accessCode ?? o.access_code;
+  const accessCode = typeof accessRaw === "string" ? accessRaw.trim() : "";
+  const locked = readSetFlag(o.locked) || readSetFlag(o.isLocked) || readSetFlag(o.is_locked);
   return {
     _id: id,
     name,
@@ -1415,6 +1450,8 @@ function normalizeFolderSet(row: unknown): ApiFolderSet | null {
     finalCount: typeof o.finalCount === "number" ? o.finalCount : undefined,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,
+    ...(locked ? { locked: true } : {}),
+    ...(accessCode ? { accessCode } : {}),
   };
 }
 
@@ -1447,11 +1484,15 @@ export async function listFolderSets(folderId: string): Promise<ApiFolderSet[]> 
 export async function createFolderSet(
   folderId: string,
   name: string,
+  options?: { locked?: boolean },
 ): Promise<{ folder: ApiFolder; set: ApiFolderSet }> {
   const res = await authedFetch(`/api/folders/${encodeURIComponent(folderId)}/sets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: name.trim() }),
+    body: JSON.stringify({
+      name: name.trim(),
+      ...(options?.locked ? { locked: true } : {}),
+    }),
   });
   const body = await parseJson(res);
   if (!res.ok) {
@@ -1481,7 +1522,14 @@ export async function createFolderSet(
 export async function updateFolderSet(
   folderId: string,
   setId: string,
-  input: { name?: string; sortOrder?: number },
+  input: {
+    name?: string;
+    sortOrder?: number;
+    /** When true, the server generates `accessCode` if the set does not have one yet. */
+    locked?: boolean;
+    /** New code; previous client unlocks for this collection stop working. */
+    regenerateAccessCode?: boolean;
+  },
 ): Promise<ApiFolder> {
   const res = await authedFetch(
     `/api/folders/${encodeURIComponent(folderId)}/sets/${encodeURIComponent(setId)}`,

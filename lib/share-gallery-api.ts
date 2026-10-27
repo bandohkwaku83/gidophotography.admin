@@ -16,6 +16,10 @@ export type ShareGallerySet = {
   selectionCount?: number;
   finalCount?: number;
   mediaCount?: number;
+  /** Public share: collection stays hidden until the client submits the photographer's code. */
+  locked?: boolean;
+  /** True on `GET /api/share/:token` after this browser's unlock cookie matches the set. */
+  unlocked?: boolean;
 };
 
 export type ShareGalleryAsset = {
@@ -307,6 +311,8 @@ function normalizeShareSets(folder: Raw | null, root: Raw): ShareGallerySet[] {
     const id = str(o._id) || str(o.id);
     const name = str(o.name);
     if (!id || !name) continue;
+    const locked = bool(o.locked) || bool(o.isLocked) || bool(o.is_locked);
+    const unlocked = bool(o.unlocked) || bool(o.isUnlocked) || bool(o.is_unlocked);
     sets.push({
       _id: id,
       name,
@@ -315,6 +321,8 @@ function normalizeShareSets(folder: Raw | null, root: Raw): ShareGallerySet[] {
       selectionCount: typeof o.selectionCount === "number" ? o.selectionCount : undefined,
       finalCount: typeof o.finalCount === "number" ? o.finalCount : undefined,
       mediaCount: typeof o.mediaCount === "number" ? o.mediaCount : undefined,
+      ...(locked ? { locked: true } : {}),
+      ...(unlocked ? { unlocked: true } : {}),
     });
   }
   return sets.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
@@ -766,6 +774,7 @@ export async function getShareGallery(
   const res = await fetch(url, {
     method: "GET",
     signal,
+    credentials: options?.baseOrigin ? "omit" : "include",
     ...(options?.baseOrigin
       ? { next: { revalidate: 120 } }
       : { cache: "no-store" }),
@@ -786,6 +795,35 @@ export async function getShareGallery(
 }
 
 /**
+ * Open one locked collection for this browser.
+ * Backend: `POST /api/share/:token/sets/:setId/unlock` with `{ code }`.
+ * Success sets an httpOnly cookie that later share requests must forward.
+ */
+export async function unlockShareCollection(
+  shareToken: string,
+  setId: string,
+  code: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const path = `/api/share/${encodeURIComponent(shareToken)}/sets/${encodeURIComponent(setId)}/unlock`;
+  const res = await fetch(apiUrl(path), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: code.trim() }),
+    signal,
+  });
+  const body = await parseJson(res);
+  if (!res.ok) {
+    throw new ShareGalleryError(
+      extractMessage(body, `Could not open this collection (${res.status})`),
+      res.status,
+      body,
+    );
+  }
+}
+
+/**
  * Toggle/add one raw file to the client selection set.
  * Backend: `POST /api/share/:token/selections` with `{ rawMediaId }`.
  */
@@ -797,6 +835,7 @@ export async function postShareGallerySelection(
   const path = `/api/share/${encodeURIComponent(shareToken)}/selections`;
   const res = await fetch(apiUrl(path), {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rawMediaId }),
     signal,
@@ -823,6 +862,7 @@ export async function syncShareGallerySelections(
   const path = `/api/share/${encodeURIComponent(shareToken)}/selections/sync`;
   const res = await fetch(apiUrl(path), {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rawMediaIds }),
     signal,
@@ -846,7 +886,7 @@ export async function clearShareGallerySelections(
   signal?: AbortSignal,
 ): Promise<void> {
   const path = `/api/share/${encodeURIComponent(shareToken)}/selections/`;
-  const res = await fetch(apiUrl(path), { method: "DELETE", signal });
+  const res = await fetch(apiUrl(path), { method: "DELETE", credentials: "include", signal });
   const body = await parseJson(res);
   if (!res.ok) {
     throw new ShareGalleryError(
@@ -866,7 +906,7 @@ export async function submitShareGallerySelectionsToPhotographer(
   signal?: AbortSignal,
 ): Promise<void> {
   const path = `/api/share/${encodeURIComponent(shareToken)}/selections/submit`;
-  const res = await fetch(apiUrl(path), { method: "POST", signal });
+  const res = await fetch(apiUrl(path), { method: "POST", credentials: "include", signal });
   const body = await parseJson(res);
   if (!res.ok) {
     throw new ShareGalleryError(
@@ -921,7 +961,7 @@ export async function fetchShareFinalDownloadBlob(
   shareToken: string,
   f: ShareGalleryFinal,
 ): Promise<Blob> {
-  const res = await fetch(getShareFinalDownloadUrl(shareToken, f.id));
+  const res = await fetch(getShareFinalDownloadUrl(shareToken, f.id), { credentials: "include" });
   const body = res.ok ? null : await parseJson(res);
   if (!res.ok) {
     throw new ShareGalleryError(
@@ -1000,7 +1040,7 @@ export async function downloadShareFinalsZip(
 
   for (const f of finals) {
     const url = getShareFinalDownloadUrl(shareToken, f.id);
-    const res = await fetch(url);
+    const res = await fetch(url, { credentials: "include" });
     if (!res.ok) {
       const body = await parseJson(res);
       throw new ShareGalleryError(

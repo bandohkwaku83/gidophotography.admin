@@ -63,6 +63,7 @@ import {
   tryNavigatorShareFinalPhoto,
   getShareFinalDownloadUrl,
   getShareGallery,
+  unlockShareCollection,
   downloadShareFinalsZip,
   type NormalizedShareGallery,
   ShareGalleryError,
@@ -103,6 +104,9 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const [coverLightboxOpen, setCoverLightboxOpen] = useState(false);
   const [photoTab, setPhotoTab] = useState<"all" | "selected" | "edited">("all");
   const [collectionFilter, setCollectionFilter] = useState<CollectionFilter>("all");
+  const [unlockCode, setUnlockCode] = useState("");
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [gridLayout, setGridLayout] = useState<GridLayout>("masonry");
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -413,6 +417,17 @@ export function ClientGalleryApp({ token }: { token: string }) {
   const showFinalsTab = gallery ? gallery.finalDelivery !== false : true;
   const gallerySets = gallery?.sets ?? [];
   const hasCollections = gallerySets.length > 0;
+  const lockedSetIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const set of gallerySets) {
+      if (set.locked === true && set.unlocked !== true) ids.add(set._id);
+    }
+    return ids;
+  }, [gallerySets]);
+  const activeLockedSet =
+    collectionFilter !== "all" && lockedSetIds.has(collectionFilter)
+      ? gallerySets.find((set) => set._id === collectionFilter) ?? null
+      : null;
   const allTabLabel = gallery?.allMediaLabel ?? "All";
   const collectionTabs = useMemo(() => {
     if (!hasCollections || !gallery) return [];
@@ -435,15 +450,21 @@ export function ClientGalleryApp({ token }: { token: string }) {
   }, [assets, photoTab]);
 
   const visibleAssets = useMemo(() => {
-    if (!hasCollections) return tabAssets;
-    return filterAssetsBySetView(tabAssets, collectionFilter);
-  }, [tabAssets, hasCollections, collectionFilter]);
+    const base = !hasCollections
+      ? tabAssets
+      : filterAssetsBySetView(tabAssets, collectionFilter);
+    if (lockedSetIds.size === 0) return base;
+    return base.filter((asset) => !asset.setId || !lockedSetIds.has(asset.setId));
+  }, [tabAssets, hasCollections, collectionFilter, lockedSetIds]);
 
   const visibleFinals = useMemo(() => {
     if (!gallery) return [];
-    if (!hasCollections) return gallery.finals;
-    return filterAssetsBySetView(gallery.finals, collectionFilter);
-  }, [gallery, hasCollections, collectionFilter]);
+    const base = !hasCollections
+      ? gallery.finals
+      : filterAssetsBySetView(gallery.finals, collectionFilter);
+    if (lockedSetIds.size === 0) return base;
+    return base.filter((final) => !final.setId || !lockedSetIds.has(final.setId));
+  }, [gallery, hasCollections, collectionFilter, lockedSetIds]);
 
   const displayedFinals = useMemo(
     () => visibleFinals.slice(0, visibleMediaLimit),
@@ -498,6 +519,50 @@ export function ClientGalleryApp({ token }: { token: string }) {
     }
     return assets.filter((a) => !a.setId).length;
   }, [photoTab, gallery, assets]);
+
+  useEffect(() => {
+    setUnlockCode("");
+    setUnlockError(null);
+  }, [collectionFilter]);
+
+  const onSubmitCollectionCode = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault();
+      if (!activeLockedSet || unlockBusy) return;
+      const code = unlockCode.trim();
+      if (!code) {
+        setUnlockError("Enter the code from your photographer.");
+        return;
+      }
+      setUnlockBusy(true);
+      setUnlockError(null);
+      try {
+        await unlockShareCollection(token, activeLockedSet._id, code);
+        const next = await getShareGallery(token);
+        const opened = next.sets.find((set) => set._id === activeLockedSet._id);
+        setGallery(next);
+        setAssets(toDemoAssets(next.assets));
+        setLoadState("ok");
+        setUnlockCode("");
+        if (opened?.locked === true && opened.unlocked !== true) {
+          setUnlockError(
+            "That code was accepted, but this collection is still locked. Try again in a moment.",
+          );
+        }
+      } catch (err) {
+        setUnlockError(
+          err instanceof ShareGalleryError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not open this collection.",
+        );
+      } finally {
+        setUnlockBusy(false);
+      }
+    },
+    [activeLockedSet, unlockBusy, unlockCode, token],
+  );
 
   /** One place for coarse-pointer final Save / Share wording (Share sheet vs in‑app browsers). */
   const touchMobileFinalSaveUx = useMemo(() => {
@@ -1189,11 +1254,21 @@ export function ClientGalleryApp({ token }: { token: string }) {
               {collectionTabs.map((tab) => {
                 const filter = collectionKeyToSetFilter(tab.key);
                 const isActive = collectionFilter === filter;
+                const shareSet = gallerySets.find((set) => set._id === tab.key);
+                const needsCode = shareSet?.locked === true && shareSet.unlocked !== true;
                 const count =
                   tab.key === GENERAL_COLLECTION_KEY
                     ? getGeneralCollectionCount()
-                    : tab.set
-                      ? getCollectionSetCount(tab.set)
+                    : shareSet
+                      ? needsCode
+                        ? (photoTab === "edited"
+                            ? shareSet.finalCount
+                            : photoTab === "selected"
+                              ? shareSet.selectionCount
+                              : shareSet.rawCount) ??
+                          shareSet.mediaCount ??
+                          getCollectionSetCount(shareSet)
+                        : getCollectionSetCount(shareSet)
                       : 0;
                 return (
                   <button
@@ -1209,6 +1284,7 @@ export function ClientGalleryApp({ token }: { token: string }) {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
                     )}
                   >
+                    {needsCode ? <Lock className="h-3 w-3 shrink-0" aria-hidden /> : null}
                     {tab.label}
                     <span
                       className={cn(
@@ -1229,7 +1305,49 @@ export function ClientGalleryApp({ token }: { token: string }) {
       ) : null}
 
       <main className="mx-auto max-w-[1920px] bg-white px-4 py-8 pb-12 sm:px-5 dark:bg-zinc-950">
-        {photoTab === "edited" ? (
+        {activeLockedSet ? (
+          <form
+            onSubmit={(event) => void onSubmitCollectionCode(event)}
+            className="mx-auto max-w-md rounded-2xl border border-zinc-200 bg-[#f6f3ee] px-5 py-8 text-center dark:border-zinc-800 dark:bg-zinc-900/50"
+          >
+            <span className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-800 shadow-sm dark:bg-zinc-950 dark:text-zinc-100">
+              <Lock className="h-5 w-5" aria-hidden />
+            </span>
+            <h2 className="mt-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              {activeLockedSet.name} is locked
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Enter the code from your photographer to view this collection.
+            </p>
+            <label className="mt-5 block text-left text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Access code
+              <input
+                type="text"
+                value={unlockCode}
+                onChange={(event) => setUnlockCode(event.target.value.toUpperCase())}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                disabled={unlockBusy}
+                aria-invalid={unlockError ? true : undefined}
+                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-center font-mono text-base font-semibold tracking-[0.18em] text-zinc-900 outline-none ring-brand/25 focus:ring-2 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              />
+            </label>
+            {unlockError ? (
+              <p className="mt-3 text-sm text-red-700 dark:text-red-300" role="alert">
+                {unlockError}
+              </p>
+            ) : null}
+            <button
+              type="submit"
+              disabled={unlockBusy || !unlockCode.trim()}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-studio-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-studio-charcoal disabled:opacity-50"
+            >
+              {unlockBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              {unlockBusy ? "Checking…" : "Open collection"}
+            </button>
+          </form>
+        ) : photoTab === "edited" ? (
           visibleFinals.length === 0 ? (
             <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
               {hasCollections && collectionFilter !== "all"

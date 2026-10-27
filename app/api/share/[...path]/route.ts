@@ -29,6 +29,7 @@ const FORWARD_REQUEST_HEADERS = [
   "if-modified-since",
   "accept",
   "accept-encoding",
+  "cookie",
 ] as const;
 
 function pickRequestHeaders(req: NextRequest, contentType: string | null): HeadersInit {
@@ -87,6 +88,11 @@ async function forward(
   for (const h of FORWARD_RESPONSE_HEADERS) {
     const v = res.headers.get(h);
     if (v) outHeaders.set(h, v);
+  }
+  const setCookies =
+    typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+  for (const cookie of setCookies) {
+    outHeaders.append("set-cookie", cookie);
   }
 
   return new NextResponse(res.body, {

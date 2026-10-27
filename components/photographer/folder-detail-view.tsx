@@ -208,6 +208,7 @@ function AdminMediaPreview({
     <img
       src={src}
       alt={variant === "tile" ? "" : name}
+      draggable={false}
       className={
         variant === "lightbox"
           ? "block max-h-[calc(92vh-8rem)] max-w-full object-contain"
@@ -263,10 +264,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [selectedRawIds, setSelectedRawIds] = useState<Set<string>>(() => new Set());
   const [selectedFinalIds, setSelectedFinalIds] = useState<Set<string>>(() => new Set());
+  const rawSelectionAnchor = useRef<string | null>(null);
+  const finalSelectionAnchor = useRef<string | null>(null);
   const rawSelectAllRef = useRef<HTMLInputElement>(null);
   const finalSelectAllRef = useRef<HTMLInputElement>(null);
   const reorderDragRef = useRef(false);
-  const [reordering, setReordering] = useState(false);
+  const mediaReorderSeq = useRef(0);
   const collectionsDragRef = useRef(false);
   const [reorderingCollections, setReorderingCollections] = useState(false);
   const [editingLabelKind, setEditingLabelKind] = useState<"all" | "general" | null>(null);
@@ -308,6 +311,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   const [lockFinalDeliveryAmount, setLockFinalDeliveryAmount] = useState("");
   const [lockingFinalDelivery, setLockingFinalDelivery] = useState(false);
   const [newSetName, setNewSetName] = useState("");
+  const [newSetLocked, setNewSetLocked] = useState(false);
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [creatingSet, setCreatingSet] = useState(false);
   const [editingSetId, setEditingSetId] = useState<string | null>(null);
@@ -529,7 +533,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return only === "" ? null : only;
   }, [activeSetFilter, folderSets.length, assetsForReorderContext]);
   const mediaReorderDisabled =
-    reorderSetId === undefined || busy || mediaDeleteBlocked() || reordering;
+    reorderSetId === undefined || busy || mediaDeleteBlocked();
   const filteredClientSelectedAssets = useMemo(() => {
     if (activeSetFilter === "all") return clientSelectedAssets;
     if (activeSetFilter === "general") return clientSelectedAssets.filter((a) => !a.setId);
@@ -671,6 +675,27 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     }
   }, [lightboxId, lbNavIndex]);
 
+  useEffect(() => {
+    if (lightboxId) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea, select, [role='dialog']")) {
+        return;
+      }
+      if (document.querySelector("[role='dialog']")) return;
+      if (tab === "uploads") {
+        setSelectedRawIds(new Set());
+        rawSelectionAnchor.current = null;
+      } else if (tab === "finals") {
+        setSelectedFinalIds(new Set());
+        finalSelectionAnchor.current = null;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxId, tab]);
+
   const rawIdsKey = useMemo(
     () => rawAssets.map((a) => a.id).sort().join("\0"),
     [rawAssets],
@@ -683,6 +708,8 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   useEffect(() => {
     setSelectedRawIds(new Set());
     setSelectedFinalIds(new Set());
+    rawSelectionAnchor.current = null;
+    finalSelectionAnchor.current = null;
   }, [folderId]);
 
   useEffect(() => {
@@ -1290,24 +1317,74 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     return busy || uploadProgress !== null || deletingKey !== null;
   }
 
-  function toggleRawSelected(mediaId: string) {
-    if (mediaDeleteBlocked()) return;
-    setSelectedRawIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(mediaId)) next.delete(mediaId);
-      else next.add(mediaId);
-      return next;
-    });
+  function rememberRawAnchor(ids: Set<string>) {
+    const ordered = filteredRawAssets.map((asset) => asset.id).filter((id) => ids.has(id));
+    rawSelectionAnchor.current = ordered[ordered.length - 1] ?? null;
   }
 
-  function toggleFinalSelected(mediaId: string) {
+  function rememberFinalAnchor(ids: Set<string>) {
+    const ordered = filteredFinalAssets.map((asset) => asset.id).filter((id) => ids.has(id));
+    finalSelectionAnchor.current = ordered[ordered.length - 1] ?? null;
+  }
+
+  function applyRawSelection(ids: Set<string>) {
+    setSelectedRawIds(ids);
+    rememberRawAnchor(ids);
+  }
+
+  function applyFinalSelection(ids: Set<string>) {
+    setSelectedFinalIds(ids);
+    rememberFinalAnchor(ids);
+  }
+
+  function toggleRawSelected(mediaId: string, shiftKey = false) {
     if (mediaDeleteBlocked()) return;
-    setSelectedFinalIds((prev) => {
+    setSelectedRawIds((prev) => {
+      if (shiftKey && rawSelectionAnchor.current) {
+        const ids = filteredRawAssets.map((asset) => asset.id);
+        const start = ids.indexOf(rawSelectionAnchor.current);
+        const end = ids.indexOf(mediaId);
+        if (start >= 0 && end >= 0) {
+          const [from, to] = start < end ? [start, end] : [end, start];
+          const next = new Set(prev);
+          for (let index = from; index <= to; index += 1) {
+            const id = ids[index];
+            if (id) next.add(id);
+          }
+          return next;
+        }
+      }
       const next = new Set(prev);
       if (next.has(mediaId)) next.delete(mediaId);
       else next.add(mediaId);
       return next;
     });
+    rawSelectionAnchor.current = mediaId;
+  }
+
+  function toggleFinalSelected(mediaId: string, shiftKey = false) {
+    if (mediaDeleteBlocked()) return;
+    setSelectedFinalIds((prev) => {
+      if (shiftKey && finalSelectionAnchor.current) {
+        const ids = filteredFinalAssets.map((asset) => asset.id);
+        const start = ids.indexOf(finalSelectionAnchor.current);
+        const end = ids.indexOf(mediaId);
+        if (start >= 0 && end >= 0) {
+          const [from, to] = start < end ? [start, end] : [end, start];
+          const next = new Set(prev);
+          for (let index = from; index <= to; index += 1) {
+            const id = ids[index];
+            if (id) next.add(id);
+          }
+          return next;
+        }
+      }
+      const next = new Set(prev);
+      if (next.has(mediaId)) next.delete(mediaId);
+      else next.add(mediaId);
+      return next;
+    });
+    finalSelectionAnchor.current = mediaId;
   }
 
   function setRawSelectAll(select: boolean) {
@@ -1590,24 +1667,24 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
   }
 
   async function onMediaReorder(kind: "raw" | "final", ordered: { id: string }[]) {
-    if (!folder || reorderSetId === undefined || reordering) return;
-    setReordering(true);
+    if (!folder || reorderSetId === undefined) return;
+    const seq = ++mediaReorderSeq.current;
     try {
       const result = await reorderFolderMedia(folder._id, {
         kind,
         setId: reorderSetId,
         orderedIds: ordered.map((item) => item.id),
       });
+      if (seq !== mediaReorderSeq.current) return;
       setFolder((prev) => (prev ? applyFolderMediaReorderResponse(prev, result) : prev));
       showToast("Gallery order saved.", "success");
     } catch (e) {
+      if (seq !== mediaReorderSeq.current) return;
       showToast(
         e instanceof FoldersApiError ? e.message : "Could not save order.",
         "error",
       );
       await refreshFolder().catch(() => {});
-    } finally {
-      setReordering(false);
     }
   }
 
@@ -1681,12 +1758,36 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
     if (!name) return;
     try {
       setCreatingSet(true);
-      const next = await createFolderSet(folder._id, name);
+      const next = await createFolderSet(folder._id, name, {
+        locked: newSetLocked,
+      });
       setFolder(next.folder);
       setNewSetName("");
+      setNewSetLocked(false);
       setCreateCollectionOpen(false);
       setActiveSetFilter(next.set._id);
-      showToast(`Set "${next.set.name}" added.`, "success");
+      const saved =
+        extractFolderSets(next.folder).find((set) => set._id === next.set._id) ?? next.set;
+      const locked = Boolean(saved.locked || next.set.locked);
+      const accessCode = saved.accessCode || next.set.accessCode;
+      if (newSetLocked && !locked) {
+        showToast(
+          `“${next.set.name}” was created, but the server did not lock it.`,
+          "error",
+        );
+      } else if (newSetLocked && !accessCode) {
+        showToast(
+          `“${next.set.name}” is locked, but the server did not return an access code.`,
+          "error",
+        );
+      } else {
+        showToast(
+          locked
+            ? `“${next.set.name}” is locked. Copy the code and send it to your client.`
+            : `Set “${next.set.name}” added.`,
+          "success",
+        );
+      }
     } catch (e) {
       showToast(
         e instanceof FoldersApiError
@@ -1728,6 +1829,54 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
       await refreshFolder().catch(() => {});
     } finally {
       setSavingSetId(null);
+    }
+  }
+
+  async function onSetAccess(
+    setId: string,
+    input: { locked?: boolean; regenerateAccessCode?: boolean },
+    success: string,
+  ) {
+    if (!folder || savingSetId || deletingSetId) return;
+    try {
+      setSavingSetId(setId);
+      const updated = await updateFolderSet(folder._id, setId, input);
+      setFolder(updated);
+      const saved = extractFolderSets(updated).find((set) => set._id === setId);
+      if (input.locked === true && !saved?.locked) {
+        showToast("The server did not lock this collection.", "error");
+        return;
+      }
+      if ((input.locked === true || input.regenerateAccessCode) && saved?.locked && !saved.accessCode) {
+        showToast("Collection is locked, but the server did not return an access code.", "error");
+        return;
+      }
+      if (input.locked === false && saved?.locked) {
+        showToast("The server kept this collection locked.", "error");
+        return;
+      }
+      showToast(success, "success");
+    } catch (e) {
+      showToast(
+        e instanceof FoldersApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not update collection access.",
+        "error",
+      );
+      await refreshFolder().catch(() => {});
+    } finally {
+      setSavingSetId(null);
+    }
+  }
+
+  async function onCopyAccessCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      showToast("Access code copied.", "success");
+    } catch {
+      showToast("Could not copy the code.", "error");
     }
   }
 
@@ -2412,6 +2561,9 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                               aria-pressed={isActive}
                               title={chipLabel}
                             >
+                              {item.row.set?.locked ? (
+                                <Lock className="mr-1 h-3 w-3 shrink-0" aria-hidden />
+                              ) : null}
                               {chipLabel}
                               <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300">
                                 {count}
@@ -2499,6 +2651,48 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           </button>
                           <button
                             type="button"
+                            onClick={() => {
+                              if (activeSetItem.locked) {
+                                if (
+                                  !confirm(
+                                    `Remove the lock on “${activeSetItem.name}”? Anyone with the gallery link will be able to open it.`,
+                                  )
+                                ) {
+                                  return;
+                                }
+                                void onSetAccess(
+                                  activeSetItem._id,
+                                  { locked: false },
+                                  "Collection unlocked.",
+                                );
+                                return;
+                              }
+                              void onSetAccess(
+                                activeSetItem._id,
+                                { locked: true },
+                                "Collection locked. Copy the code and send it to your client.",
+                              );
+                            }}
+                            disabled={
+                              savingSetId === activeSetItem._id ||
+                              deletingSetId === activeSetItem._id
+                            }
+                            aria-label={
+                              activeSetItem.locked
+                                ? `Unlock collection ${activeSetItem.name}`
+                                : `Lock collection ${activeSetItem.name}`
+                            }
+                            title={activeSetItem.locked ? "Remove lock" : "Lock collection"}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-45 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                          >
+                            {activeSetItem.locked ? (
+                              <Unlock className="h-3.5 w-3.5" aria-hidden />
+                            ) : (
+                              <Lock className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() =>
                               void onDeleteSet(activeSetItem._id, activeSetItem.name)
                             }
@@ -2517,6 +2711,56 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     </div>
                   ) : null}
             </div>
+            {activeSetItem?.locked ? (
+              <div className="mt-3 flex flex-col gap-3 rounded-xl border border-zinc-200 bg-[#f6f3ee] px-3 py-3 dark:border-zinc-700 dark:bg-zinc-900/60 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                    Locked for clients
+                  </p>
+                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                    Send this code with the gallery link. The collection stays hidden until a client enters it.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="rounded-lg bg-white px-2.5 py-1.5 font-mono text-sm font-semibold tracking-[0.14em] text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+                    {activeSetItem.accessCode || "————"}
+                  </code>
+                  <button
+                    type="button"
+                    disabled={!activeSetItem.accessCode || savingSetId === activeSetItem._id}
+                    onClick={() => {
+                      if (activeSetItem.accessCode) void onCopyAccessCode(activeSetItem.accessCode);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                  >
+                    <Copy className="h-3.5 w-3.5" aria-hidden />
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingSetId === activeSetItem._id || deletingSetId === activeSetItem._id}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          `Generate a new code for “${activeSetItem.name}”? The current code will stop working.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      void onSetAccess(
+                        activeSetItem._id,
+                        { regenerateAccessCode: true },
+                        "New access code ready.",
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-800 transition hover:bg-zinc-50 disabled:opacity-45 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                    New code
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
           ) : null}
 
@@ -2544,6 +2788,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                   Upload raw files to this gallery. They are sent to the server immediately.
                 </p>
+                {reorderSetId !== undefined && filteredRawAssets.length > 0 ? (
+                  <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                    Drag a photo to reposition it. Drag between photos, or hold Shift and drag
+                    across them, to select several. Then drag one selected photo to move the group.
+                  </p>
+                ) : null}
               </div>
               {filteredRawAssets.length > 0 ? (
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:max-w-[min(100%,22rem)] sm:items-end">
@@ -2605,6 +2855,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               disabled={busy}
               onCreateCollection={() => {
                 setNewSetName("");
+                setNewSetLocked(false);
                 setCreateCollectionOpen(true);
               }}
               onFiles={(files) => void onRawUpload(files)}
@@ -2624,10 +2875,13 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 items={filteredRawAssets}
                 disabled={mediaReorderDisabled}
                 dragGuardRef={reorderDragRef}
+                selectedIds={selectedRawIds}
+                selectionDisabled={mediaDeleteBlocked()}
+                onSelectionChange={applyRawSelection}
                 onOrderChange={(ordered) => void onMediaReorder("raw", ordered)}
-                className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+                className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
                 renderOverlay={(a) => (
-                  <div className="relative aspect-square w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
+                  <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-zinc-100">
                     <AdminMediaPreview
                       src={a.previewUrl ?? a.thumbUrl}
                       name={a.originalName}
@@ -2635,22 +2889,34 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                     />
                   </div>
                 )}
-                renderItem={(a, { setNodeRef, style, dragProps, isDragging }) => (
+                renderItem={(a, { setNodeRef, style, dragProps, isDragging, isCompanion, dragCount }) => (
                   <li
                     ref={setNodeRef}
                     style={style}
+                    data-media-id={a.id}
                     className={cn(
-                      "group overflow-hidden rounded-lg border border-zinc-200/90 bg-zinc-50/30 shadow-sm ring-1 ring-zinc-900/[0.04] transition-[box-shadow,opacity] hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-900/40 dark:ring-white/[0.04] dark:hover:border-zinc-500",
-                      isDragging && "opacity-35",
+                      "group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white hover:border-zinc-300 hover:shadow-[0_8px_20px_-12px_rgba(24,24,27,0.45)] dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700",
+                      selectedRawIds.has(a.id) && "border-brand/45 ring-2 ring-brand/20",
+                      isDragging && "opacity-40",
+                      isCompanion && "opacity-60",
                     )}
                   >
-                    <div className="relative aspect-square w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
-                      <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
+                    <div className="relative aspect-square w-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-900">
+                      {isDragging && dragCount > 1 ? (
+                        <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 flex h-6 min-w-6 items-center justify-center rounded-full bg-studio-ink px-1.5 text-[11px] font-semibold text-white shadow-md">
+                          {dragCount}
+                        </span>
+                      ) : null}
+                      <label className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md bg-white/95 shadow-sm ring-1 ring-black/10 backdrop-blur-[2px] dark:bg-zinc-950/90 dark:ring-white/15">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 rounded border-zinc-400 text-brand focus:ring-brand"
+                          className="h-3.5 w-3.5 rounded border-zinc-300 text-brand focus:ring-brand/40"
                           checked={selectedRawIds.has(a.id)}
-                          onChange={() => toggleRawSelected(a.id)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            toggleRawSelected(a.id, e.shiftKey);
+                          }}
+                          readOnly
                           disabled={mediaDeleteBlocked()}
                           aria-label={`Select ${a.originalName}`}
                         />
@@ -2659,7 +2925,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         {...dragProps}
                         className={cn(
-                          "absolute inset-0 z-[1] flex h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
+                          "absolute inset-0 z-[1] block h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40 [&>span]:absolute [&>span]:inset-0",
                           !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
                         )}
                         onClick={() => openMediaPreview(a.id)}
@@ -2671,15 +2937,15 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           isVideo={isDemoAssetVideo(a)}
                         />
                         {isDemoAssetVideo(a) ? (
-                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/20 text-white">
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
                       </button>
                     </div>
-                    <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
+                    <div className="mt-auto flex h-9 items-center gap-0.5 border-t border-zinc-100 bg-white px-2 dark:border-zinc-800 dark:bg-zinc-950">
                       <span
-                        className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-zinc-700 dark:text-zinc-200"
+                        className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-600 dark:text-zinc-300"
                         title={a.originalName}
                       >
                         {a.originalName}
@@ -2688,7 +2954,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         disabled={mediaDeleteBlocked() || deletingKey === `raw:${a.id}`}
                         onClick={() => void onDeleteRawAsset(a.id)}
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-600/90 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400/90 dark:hover:bg-red-950/50"
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                         title="Move to trash"
                       >
                         {deletingKey === `raw:${a.id}` ? (
@@ -2860,6 +3126,12 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                   Upload finished edits for client delivery.
                 </p>
+                {reorderSetId !== undefined && filteredFinalAssets.length > 0 ? (
+                  <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                    Drag a photo to reposition it. Drag between photos, or hold Shift and drag
+                    across them, to select several. Then drag one selected photo to move the group.
+                  </p>
+                ) : null}
                 {filteredFinalAssets.length > 0 ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span
@@ -2961,6 +3233,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               disabled={busy}
               onCreateCollection={() => {
                 setNewSetName("");
+                setNewSetLocked(false);
                 setCreateCollectionOpen(true);
               }}
               onFiles={(files) => void openFinalUploadWizard(files)}
@@ -2974,35 +3247,51 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 items={filteredFinalAssets}
                 disabled={mediaReorderDisabled}
                 dragGuardRef={reorderDragRef}
+                selectedIds={selectedFinalIds}
+                selectionDisabled={mediaDeleteBlocked()}
+                onSelectionChange={applyFinalSelection}
                 onOrderChange={(ordered) => void onMediaReorder("final", ordered)}
-                className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+                className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
                 renderOverlay={(f) => (
-                  <div className="w-36 overflow-hidden rounded-lg bg-zinc-100 sm:w-40">
+                  <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-zinc-100">
                     <AdminMediaPreview
                       src={f.url}
                       name={f.name}
                       isVideo={isDemoFinalAssetVideo(f)}
-                      fit="photo"
-                      mark={galleryMark}
                     />
+                    {galleryMark.enabled && galleryMark.src && !isDemoFinalAssetVideo(f) ? (
+                      <GalleryMarkOverlay mark={galleryMark} />
+                    ) : null}
                   </div>
                 )}
-                renderItem={(f, { setNodeRef, style, dragProps, isDragging }) => (
+                renderItem={(f, { setNodeRef, style, dragProps, isDragging, isCompanion, dragCount }) => (
                   <li
                     ref={setNodeRef}
                     style={style}
+                    data-media-id={f.id}
                     className={cn(
-                      "group overflow-hidden rounded-lg border border-zinc-200/90 bg-white shadow-sm ring-1 ring-zinc-900/[0.04] transition-[box-shadow,opacity] hover:border-zinc-300 hover:ring-zinc-900/[0.07] dark:border-zinc-700 dark:bg-zinc-950 dark:ring-white/[0.04] dark:hover:border-zinc-500",
-                      isDragging && "opacity-35",
+                      "group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white hover:border-zinc-300 hover:shadow-[0_8px_20px_-12px_rgba(24,24,27,0.45)] dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700",
+                      selectedFinalIds.has(f.id) && "border-brand/45 ring-2 ring-brand/20",
+                      isDragging && "opacity-40",
+                      isCompanion && "opacity-60",
                     )}
                   >
-                    <div className="relative w-full overflow-hidden bg-zinc-100 dark:bg-zinc-800/80">
-                      <label className="pointer-events-auto absolute left-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/90 shadow ring-1 ring-black/10 dark:bg-zinc-900/90 dark:ring-white/15">
+                    <div className="relative aspect-square w-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-900">
+                      {isDragging && dragCount > 1 ? (
+                        <span className="pointer-events-none absolute right-1.5 top-1.5 z-10 flex h-6 min-w-6 items-center justify-center rounded-full bg-studio-ink px-1.5 text-[11px] font-semibold text-white shadow-md">
+                          {dragCount}
+                        </span>
+                      ) : null}
+                      <label className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md bg-white/95 shadow-sm ring-1 ring-black/10 backdrop-blur-[2px] dark:bg-zinc-950/90 dark:ring-white/15">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 rounded border-zinc-400 text-brand focus:ring-brand"
+                          className="h-3.5 w-3.5 rounded border-zinc-300 text-brand focus:ring-brand/40"
                           checked={selectedFinalIds.has(f.id)}
-                          onChange={() => toggleFinalSelected(f.id)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            toggleFinalSelected(f.id, e.shiftKey);
+                          }}
+                          readOnly
                           disabled={mediaDeleteBlocked()}
                           aria-label={`Select ${f.name}`}
                         />
@@ -3011,7 +3300,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         {...dragProps}
                         className={cn(
-                          "relative z-[1] block w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40",
+                          "absolute inset-0 z-[1] block h-full w-full touch-none outline-none ring-inset focus-visible:ring-2 focus-visible:ring-brand/40 [&>span]:absolute [&>span]:inset-0",
                           !mediaReorderDisabled && "cursor-grab active:cursor-grabbing",
                         )}
                         onClick={() => openMediaPreview(f.id)}
@@ -3021,25 +3310,28 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                           src={f.url}
                           name={f.name}
                           isVideo={isDemoFinalAssetVideo(f)}
-                          fit="photo"
-                          mark={galleryMark}
                         />
                         {isDemoFinalAssetVideo(f) ? (
-                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/10 text-white">
+                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/20 text-white">
                             <PlayCircle className="h-8 w-8 drop-shadow" aria-hidden />
                           </span>
                         ) : null}
                       </button>
+                      {galleryMark.enabled && galleryMark.src && !isDemoFinalAssetVideo(f) ? (
+                        <span className="pointer-events-none absolute inset-0 z-[2]">
+                          <GalleryMarkOverlay mark={galleryMark} />
+                        </span>
+                      ) : null}
                       {f.locked ? (
-                        <span className="pointer-events-none absolute bottom-2 right-2 z-[5] inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                        <span className="pointer-events-none absolute bottom-1.5 right-1.5 z-[5] inline-flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                           <Lock className="h-3 w-3" aria-hidden />
                           Locked
                         </span>
                       ) : null}
                     </div>
-                    <div className="flex items-center justify-between gap-1.5 border-t border-zinc-100/90 bg-white/95 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/90">
+                    <div className="mt-auto flex h-9 items-center gap-0.5 border-t border-zinc-100 bg-white px-2 dark:border-zinc-800 dark:bg-zinc-950">
                       <span
-                        className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-zinc-700 dark:text-zinc-200"
+                        className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-600 dark:text-zinc-300"
                         title={f.name}
                       >
                         {f.name}
@@ -3048,7 +3340,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                         type="button"
                         disabled={mediaDeleteBlocked() || deletingKey === `final:${f.id}`}
                         onClick={() => void onDeleteFinalAsset(f.id)}
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-600/90 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400/90 dark:hover:bg-red-950/50"
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                         title="Move final to trash"
                       >
                         {deletingKey === `final:${f.id}` ? (
@@ -3235,7 +3527,7 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
               Create collection
             </h2>
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Name this set of photos. You can rename it later.
+              Name this set of photos. You can rename it later, and lock it so only clients with a code can open it.
             </p>
             <label className="mt-4 block text-xs font-medium text-zinc-700 dark:text-zinc-300">
               Collection name
@@ -3252,6 +3544,21 @@ export function FolderDetailView({ folderId }: { folderId: string }) {
                 placeholder="e.g. Ceremony"
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-brand/25 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900"
               />
+            </label>
+            <label className="mt-4 flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={newSetLocked}
+                disabled={creatingSet}
+                onChange={(e) => setNewSetLocked(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-studio-ink focus:ring-brand dark:border-zinc-600"
+              />
+              <span>
+                <span className="font-medium">Lock this collection</span>
+                <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                  Clients need the code you send them. You can turn this on later for a collection that already exists.
+                </span>
+              </span>
             </label>
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button

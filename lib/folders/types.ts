@@ -55,6 +55,10 @@ export type ApiFolderSet = {
   finalCount?: number;
   createdAt?: string;
   updatedAt?: string;
+  /** When true, the public share hides this collection until the client submits `accessCode`. */
+  locked?: boolean;
+  /** Photographer-only. Omitted on `GET /api/share/:token`. */
+  accessCode?: string;
 };
 
 /** Grouped media bucket from folder/share detail (`uploadsBySet`, etc.). */
@@ -102,6 +106,12 @@ export type ApiFolderMedia = {
   rawHiddenFromUploads?: boolean;
   /** Display order within `(folderId, setId, kind)`; lower = earlier in gallery. */
   sortOrder?: number;
+};
+
+/** Response from `PATCH /api/folders/reorder`. */
+export type FolderReorderResult = {
+  message: string;
+  updatedCount: number;
 };
 
 /** Response from `PATCH /api/folders/:folderId/media/reorder`. */
@@ -190,6 +200,11 @@ export type ApiFolder = {
   createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * Manual position in the galleries list. Lower comes first.
+   * Omitted on the server so new galleries stay ahead of arranged ones.
+   */
+  sortOrder?: number;
   /** When set, folder is in trash (soft-delete). */
   deletedAt?: string | null;
   /** Logo stamped onto the client copy of each final. Admin `url` stays clean. */
